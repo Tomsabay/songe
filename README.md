@@ -2,7 +2,7 @@
 
 # Songe
 
-A local model that learns from how you use it.
+A training engine for your local model, using your idle compute.
 
 Use your model as usual through opencode, pi or any OpenAI-compatible tool. When your agent is quiet, Songe looks at what happened after each of the model's actions — the tool result, the error, your next message — and teaches the model to see it coming. A new version is used only if it passes checks. Nothing leaves your machine.
 
