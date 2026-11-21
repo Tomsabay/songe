@@ -8,7 +8,8 @@ welcome as [issues](https://github.com/sous-labs/songe/issues).
 
 - **More setups and models.** Verifying Songe end to end across model servers
   (LM Studio, vLLM, Ollama, llama.cpp, mlx-lm), operating systems and model
-  families.
+  families. Tested your setup? Report it on the
+  [testing board](https://github.com/sous-labs/songe/issues/15).
 - **Lighter training.** Deep Dreams that fit alongside everyday apps, on
   everyday machines.
 - **A more robust Dream.** Better lessons from small models, a stronger check

@@ -89,6 +89,8 @@ You need a model served locally, and an agent:
 | Training | Apple Silicon (MLX); NVIDIA and AMD (PyTorch) | Apple Silicon, NVIDIA |
 
 Machines without a GPU still serve and record, but do not train.
+Tried Songe on another setup? Share the result on the
+[testing board](https://github.com/sous-labs/songe/issues/15).
 </details>
 
 ## 🌙 How it works
