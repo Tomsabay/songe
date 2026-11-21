@@ -2144,6 +2144,8 @@ class ModelScheduler(Scheduler):
                 stop(reason or ("the training run failed" if failed else "it ended without training"))
 
     async def discover_models(self):
+        import httpx
+
         from .models import registry
 
         # Discovery runs in an idle gap, never on the inference admission path.
@@ -2160,7 +2162,9 @@ class ModelScheduler(Scheduler):
             refs = await asyncio.to_thread(
                 registry.discover, self.installation_config, self.upstream
             )
-        except (OSError, ValueError, RuntimeError) as exc:
+        except (OSError, ValueError, RuntimeError, KeyError, httpx.HTTPError) as exc:
+            # A server that is down or answers oddly leaves the models pending
+            # for a later tick; it must never end the tick (issue #8).
             self.reason = f"Model discovery unavailable: {exc}"
             return
         for row in unknown:

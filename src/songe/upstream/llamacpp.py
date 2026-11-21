@@ -33,7 +33,10 @@ class LlamaCPP:
         self.routes = {}
 
     def discover(self):
-        return discovery.llamacpp(self.url, self.transport)
+        # The owned llama-server runs only while Songe needs it; the user's own
+        # server (server_source_url) is always up and serves the base.
+        source = getattr(self.config, "server_source_url", "")
+        return discovery.llamacpp(source or self.url, self.transport)
 
     async def _request(self, method, path, **kwargs):
         async with httpx.AsyncClient(

@@ -386,6 +386,9 @@ def discover(config, upstream=None):
         return discovery.ollama(
             folder=config.ollama_models_dir or None, url=config.upstream_url
         )
+    if config.upstream == "llamacpp":
+        # As LlamaCPP.discover: the owned server may not be running.
+        return discovery.llamacpp(config.server_source_url or config.upstream_url)
     return getattr(discovery, config.upstream)(config.upstream_url)
 
 

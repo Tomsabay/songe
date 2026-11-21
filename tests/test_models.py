@@ -524,6 +524,61 @@ async def test_idle_discovery_adds_second_base_and_records_unsupported_reason(le
     assert "not discoverable" in row["reason"]
 
 
+async def test_unreachable_discovery_keeps_models_pending_without_failing(learners):
+    # Issue #8: an httpx error from discovery ended every scheduler tick.
+    config, store = learners
+    registry.observe(config, store, "typo-model")
+
+    def refused():
+        raise httpx.ConnectError("Connection refused")
+
+    scheduler = ModelScheduler(config, store, SimpleNamespace(discover=refused))
+    await scheduler.discover_models()
+    assert scheduler.reason.startswith("Model discovery unavailable")
+    assert registry.find(store, "typo-model")["support"] == "pending"
+
+
+def owned_llamacpp(tmp_path, seen):
+    """An owned llama-server that is down beside the user's running one."""
+    from songe.upstream.llamacpp import LlamaCPP
+
+    weights = tmp_path / "smol.gguf"
+
+    def handler(request):
+        seen.append(request.url.port)
+        if request.url.port != 8080:
+            raise httpx.ConnectError("Connection refused", request=request)
+        if request.url.path == "/props":
+            return httpx.Response(200, json={"model_path": str(weights)})
+        return httpx.Response(200, json={"data": [{"id": "smol.gguf"}]})
+
+    config = Config(
+        upstream="llamacpp",
+        upstream_url="http://127.0.0.1:34861/v1",
+        server_owned=True,
+        server_source_url="http://127.0.0.1:8080/v1",
+    )
+    return config, LlamaCPP(config, transport=httpx.MockTransport(handler))
+
+
+def test_owned_llamacpp_discovers_from_the_source_server(tmp_path):
+    seen = []
+    _, upstream = owned_llamacpp(tmp_path, seen)
+    assert [r.serving_id for r in upstream.discover()] == ["smol.gguf"]
+    assert set(seen) == {8080}
+
+
+async def test_unknown_name_on_owned_llamacpp_becomes_unsupported(learners, tmp_path):
+    config, store = learners
+    registry.observe(config, store, "typo-model")
+    _, upstream = owned_llamacpp(tmp_path, [])
+    scheduler = ModelScheduler(config, store, upstream)
+    await scheduler.discover_models()
+    row = registry.find(store, "typo-model")
+    assert row["support"] == "unsupported"
+    assert "not discoverable" in row["reason"]
+
+
 def test_all_level_reuses_existing_shared_data(learners):
     config, store = learners
     store.sync_steps(evidence())
