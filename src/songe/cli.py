@@ -741,7 +741,14 @@ def missing_agents(config):
 
     installed = agents.routing()
     rows = [
-        ("Agent", f"{agent} not found · run songe init again after installing it")
+        (
+            "Agent",
+            # Agents are found by the settings folder they make on first start,
+            # so one installed but never started is not set up yet.
+            f"{agent} not set up yet · start it once, then run songe init again"
+            if shutil.which(agent)
+            else f"{agent} not found · run songe init again after installing it",
+        )
         for agent in agents.KNOWN
         if agent not in installed
     ]

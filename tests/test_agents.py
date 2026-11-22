@@ -256,6 +256,7 @@ def test_init_ends_with_the_step_left(config, monkeypatch):
 def test_init_plan_names_agents_it_did_not_find(config, monkeypatch):
     from songe import cli
 
+    monkeypatch.setattr(cli.shutil, "which", lambda name: None)
     monkeypatch.setattr(agents, "routing", lambda home=None: {"opencode": False})
     assert cli.missing_agents(config) == [
         ("Agent", "pi not found · run songe init again after installing it")
@@ -263,3 +264,15 @@ def test_init_plan_names_agents_it_did_not_find(config, monkeypatch):
     monkeypatch.setattr(agents, "routing", lambda home=None: {})
     rows = cli.missing_agents(config)
     assert rows[-1] == ("Other", "any OpenAI-compatible tool · http://127.0.0.1:7613/v1")
+
+
+def test_init_plan_says_an_installed_agent_needs_one_start(config, monkeypatch):
+    # #70: pi on PATH but never started has no ~/.pi/agent yet; "not found
+    # · install it" asked the user to install what they already had.
+    from songe import cli
+
+    monkeypatch.setattr(cli.shutil, "which", lambda name: f"/usr/local/bin/{name}")
+    monkeypatch.setattr(agents, "routing", lambda home=None: {"opencode": False})
+    assert cli.missing_agents(config) == [
+        ("Agent", "pi not set up yet · start it once, then run songe init again")
+    ]
