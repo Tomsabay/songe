@@ -892,7 +892,10 @@ class Scheduler:
 
         # Also when a pressed Deep Dream's training run found it needed
         # growth (see ModelScheduler.finish): measure, then train.
-        growing = needs_growth(self.config, self.store) or bool(self.store.get("growth_requested"))
+        # Off the event loop: the proxy and the status API answer meanwhile.
+        growing = await asyncio.to_thread(needs_growth, self.config, self.store) or bool(
+            self.store.get("growth_requested")
+        )
         measured = any("host_peak_bytes" in r for r in calibration.get("rows", []))
         upgrade_calibration = (
             (self.config.calibration_available and not measured)
@@ -1853,7 +1856,9 @@ class ModelScheduler(Scheduler):
             if m["id"] == model
         )
         config, store = self.config_for(model), self.installation_store.scoped(model)
-        measuring = row["support"] == "pending" or needs_growth(config, store)
+        measuring = row["support"] == "pending" or await asyncio.to_thread(
+            needs_growth, config, store
+        )
         resumes = any(n["status"] in ("interrupted", "ready") for n in store.nights())
         short = await asyncio.to_thread(heldout_short, config, store)
         if short and row["support"] != "pending" and not resumes:
@@ -1921,7 +1926,9 @@ class ModelScheduler(Scheduler):
         ]
         if not rows:
             return "no model is learning · songe models"
-        model = self.choose_model() or min(rows, key=lambda m: m.get("auto_dream") is False)["id"]
+        model = await asyncio.to_thread(self.choose_model) or min(
+            rows, key=lambda m: m.get("auto_dream") is False
+        )["id"]
         learner = self.installation_store.scoped(model)
         if learner.get("memory_wait"):
             return deep_step(learner).removeprefix("Deep Dream · ")
@@ -1951,11 +1958,13 @@ class ModelScheduler(Scheduler):
         from .sleep.calibration_state import needs_growth
 
         excluded = set()
-        while model := self.choose_model(excluded):
+        # Choosing reads every model's experience: off the event loop, so the
+        # proxy and `songe status` answer meanwhile (#71).
+        while model := await asyncio.to_thread(self.choose_model, excluded):
             self.select(model)
             if (
                 not self.config.calibration_available
-                or needs_growth(self.config, self.store)
+                or await asyncio.to_thread(needs_growth, self.config, self.store)
                 or await self.enough()
             ):
                 return model
@@ -2927,10 +2936,14 @@ class ModelScheduler(Scheduler):
             for row in registry.entries(self.installation_store):
                 if "calibration paused · memory" in (row.get("reason") or ""):
                     registry.support(self.installation_store, row["id"], "pending")
-            self.reason = experience_wait(
-                self.installation_config,
-                self.installation_store,
-                registry.summaries(self.installation_config, self.installation_store),
+            self.reason = await asyncio.to_thread(
+                lambda: experience_wait(
+                    self.installation_config,
+                    self.installation_store,
+                    registry.summaries(
+                        self.installation_config, self.installation_store
+                    ),
+                )
             )
             self.active_model = None
             return

@@ -117,12 +117,11 @@ def service_state(config, identity):
         return None
     except httpx.ReadTimeout:
         # A slow answer means a busy service: never restart it under load.
-        # The update waits, and the next command tries again.
-        return {
-            "service_running": True,
-            "service_version": None,
-            "requests_in_flight": 1,
-        }
+        # Its release is unknown, and no agent request is known to be in
+        # progress (#71: "waits for the agent request in progress" repeated
+        # while the service already ran this release with none in flight).
+        # The next command tries again.
+        return {"service_running": True, "service_version": None, "busy": True}
     if data.get("installation_id") != identity:
         raise RuntimeError("service belongs to another installation")
     return data
@@ -221,6 +220,12 @@ def catch_up(
 
             python = str(runtime_python(root)) if private else stable_python()
             rebind = os.path.abspath(argv[0]) != os.path.abspath(python)
+            if (state or {}).get("busy"):
+                # It did not answer in time, so its release is unknown: say
+                # nothing unless this install itself must change under it.
+                if update_runtime or rebind:
+                    emit(f"Update to {__version__} waits until the service is less busy")
+                return None
             pending = root / PENDING
             retry = pending.exists()
             if not (update_runtime or old_service or rebind):
@@ -235,11 +240,16 @@ def catch_up(
                 raise RuntimeError(f"runtime {runtime} is newer than CLI {__version__}")
             # Never restart under an agent request; the next command retries.
             waited = time.monotonic() + busy_timeout
-            while (state or {}).get("requests_in_flight") and time.monotonic() < waited:
+            while (
+                (state or {}).get("requests_in_flight") or (state or {}).get("busy")
+            ) and time.monotonic() < waited:
                 time.sleep(1)
                 state = read_state()
             if (state or {}).get("requests_in_flight"):
                 emit(f"Update to {__version__} waits for the agent request in progress")
+                return None
+            if (state or {}).get("busy"):
+                emit(f"Update to {__version__} waits until the service is less busy")
                 return None
             mismatch = (
                 f"Service release differs from CLI {__version__} · fix: songe doctor"

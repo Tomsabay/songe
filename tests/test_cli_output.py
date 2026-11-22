@@ -395,14 +395,10 @@ def test_control_commands_print_results(tmp_path, monkeypatch, capsys):
     ]:
         assert cli.main(args + command) == 0
         assert capsys.readouterr().out == expected
-    monkeypatch.setattr(
-        cli.LocalClient, "snapshot", lambda self: {"service_running": False}
-    )
+    monkeypatch.setattr(cli.LocalClient, "running", lambda self: False)
     assert cli.main(args + ["open"]) == 1
     assert capsys.readouterr().err == "✗ Songe is stopped\nrun  songe serve\n"
-    monkeypatch.setattr(
-        cli.LocalClient, "snapshot", lambda self: {"service_running": True}
-    )
+    monkeypatch.setattr(cli.LocalClient, "running", lambda self: True)
     assert cli.main(args + ["open"]) == 0
     port = cli.Config.load(tmp_path / "data").port
     assert capsys.readouterr().out == f"✓ Dashboard · http://127.0.0.1:{port}/\n"

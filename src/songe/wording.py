@@ -189,7 +189,8 @@ def status_copy(data):
     if "proxy idle" in reason:
         ready = (
             "Ready to measure"
-            if "calibrate" in (activity.get("next") or "")
+            if activity.get("next_step") == "measure"
+            or "calibrate" in (activity.get("next") or "")
             else "Ready to train"
         )
         quiet = reason.replace("proxy idle ", "", 1)
@@ -198,7 +199,11 @@ def status_copy(data):
         if waited and int(waited[1]) * seconds.get(waited[2], 1) >= int(
             waited[3]
         ) * seconds.get(waited[4], 1):
-            return ready, "Starting now"
+            # "Starting now" only once the scheduler has decided to start;
+            # until its next check, quiet long enough is not yet a start.
+            return ready, "Starting now" if activity.get(
+                "starting", True
+            ) else "Starts when idle"
         return ready, "Starts when idle · " + quiet.replace("/", " of ", 1)
     if "proxy requests in flight" in reason:
         return "In use", "Continues after this conversation"

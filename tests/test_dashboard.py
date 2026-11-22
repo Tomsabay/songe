@@ -53,6 +53,37 @@ def test_three_lines_idle_and_calibration_progress(config, store, monkeypatch):
     assert [key for key, value in lines(state)] == ["now", "next", "paused"]
 
 
+@pytest.mark.parametrize("reason,detail", [
+    # The scheduler decided to start: it is starting.
+    ("Will sleep when idle", "Starting now"),
+    # A wait set at its last check, whose time has since run out: it
+    # decides again on its next check, so not "Starting now" yet.
+    ("Waiting for an idle gap", "Starts when idle"),
+])
+def test_waiting_to_measure_again_under_dreams_says_measure(
+    config, store, monkeypatch, reason, detail
+):
+    # Issue 71: between measuring runs the status said "Ready to train ·
+    # Starting now", then "Getting ready · measuring … 1024 of 8192 tokens".
+    from songe.sleep import calibration_state
+    from songe.wording import status_copy
+
+    config.learning = "dreams"
+    registry.migrate(config, store)
+    registry.set_learning(store, config.base_identifier, "all")
+    registry.support(store, config.base_identifier, "trainable")
+    models = registry.summaries(config, store)
+    monkeypatch.setattr(calibration_state, "needs_growth", lambda config, store: True)
+    monkeypatch.setattr("songe.status.time.monotonic", lambda: 1000)
+    worker = scheduler(config, last_traffic=900, process=None)
+    worker.reason = reason
+    worker.idle_threshold_seconds = 10
+    worker.choose_model = lambda: config.base_identifier
+    result = activity(config, store, worker, None, models, live=True)
+    assert result["next_step"] == "measure"
+    assert status_copy({"activity": result}) == ("Ready to measure", detail)
+
+
 def test_training_step_eta_and_next_gate(config, store):
     models = learner(config, store)
     training = {

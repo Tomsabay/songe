@@ -920,7 +920,7 @@ def main(argv=None):
             local.control(command)
             result("Learning paused" if command == "pause" else "Learning resumed")
         elif command == "open":
-            if not local.snapshot()["service_running"]:
+            if not local.running():
                 error("Songe is stopped", f"run  {NAME} serve")
                 return 1
             url = f"http://127.0.0.1:{config.port}/"
