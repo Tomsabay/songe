@@ -137,7 +137,13 @@ def snapshot(config, store, scheduler=None, *, live=False, release=None, lean=Fa
             and not model.get("last_trained")
         )
 
-    models = [m for m in library.summaries(config, store, scheduler) if not deleted(m)]
+    # An embedding model can never chat, learn or be picked in an agent:
+    # it is not listed at all (#72), not listed as "Not supported yet".
+    models = [
+        m
+        for m in library.summaries(config, store, scheduler)
+        if not deleted(m) and not library.embedding_row(m)
+    ]
     nights = store.nights()
     scoreboard = rows(store, "scoreboard", "day, model_version")
     # lean: the learning page reads only status, cycle and models; the

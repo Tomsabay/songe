@@ -115,10 +115,14 @@ def confirm(prompt, yes=False):
     return answer in {"y", "yes"} or (default and not answer)
 
 
-def confirm_install(config, args):
+def confirm_install(config, args, root=None):
     if not confirm("Install?", args.yes):
         return False
     config.replace_loaded_model = True
+    if root is not None:
+        # Init writes nothing before this answer (#72): the data folder and
+        # its database start here, private from the first byte.
+        Store(private_dir(root))
     return True
 
 
@@ -215,6 +219,7 @@ def initialize(args, root):
     from .backends import install as dependencies
     from .backends import resolve_kind
     from .models import ModelRef, discovery
+    from .models.library import embedding_name, is_embedding
     from .platform import Rooted, current
     from .sleep.fuse import candidate_kind
     from .upstream.lmstudio import find_lms
@@ -270,6 +275,14 @@ def initialize(args, root):
             )
         )
         refs = [ref]
+        # Models downloaded since the last init are offered to agents too
+        # (#72: one was left out without a word); the bound model stays.
+        from .models import registry
+
+        try:
+            catalog_refs = registry.discover(config)
+        except (OSError, ValueError, KeyError, httpx.HTTPError, subprocess.SubprocessError):
+            catalog_refs = []
     else:
         for name in [requested] if requested else defaults:
             url = getattr(args, "upstream_url", None) or (
@@ -343,6 +356,8 @@ def initialize(args, root):
                 ids = upstream_model_ids(url)
             except (OSError, ValueError, httpx.HTTPError):
                 continue
+            # An embedding model can never chat: not offered to agents (#72).
+            ids = [i for i in ids if not embedding_name(i)]
             if ids:
                 label = name or "OpenAI-compatible"
                 config.upstream, config.upstream_url = name or "vllm", url
@@ -370,7 +385,7 @@ def initialize(args, root):
                 if getattr(args, "show_diff", False):
                     for *_, diff in changes:
                         print(diff)
-                if not confirm_install(config, args):
+                if not confirm_install(config, args, root):
                     return
                 config.save(root)
                 from .models import registry
@@ -430,13 +445,25 @@ def initialize(args, root):
         {
             (r.upstream, r.path.resolve()): r
             for r in [r for r in catalog_refs if r.path.exists()] + refs
+            # An embedding model can never chat: it is not offered to agents
+            # nor listed as a model (#72).
+            if r.path.resolve() == ref.path.resolve() or not is_embedding(r)
         }.values()
     )
+    from .models.names import public_name
+
+    # A model already offered under its songe/ name is not added again.
+    offered = set(config.exposed_models)
     config.exposed_models = list(
         dict.fromkeys(
             [
                 *config.exposed_models,
-                *(r.serving_id for r in catalog_refs if r.upstream == ref.upstream),
+                *(
+                    r.serving_id
+                    for r in catalog_refs
+                    if r.upstream == ref.upstream
+                    and public_name(r.serving_id) not in offered
+                ),
             ]
         )
     )
@@ -475,9 +502,11 @@ def initialize(args, root):
         raise ValueError("Model name: letters, digits, ., _, -")
     config.public_model = f"{PROVIDER}/{name}"
     config.artifact_kind = candidate_kind(replace(config, artifact_kind=""), platform)
-    existing = Store(root)
+    # Only an earlier install's history is read before the user accepts;
+    # a first init creates nothing until then (#72).
+    existing = Store(root) if (root / "experience.sqlite3").exists() else None
     bound = Config.load(root)
-    if (existing.version() or existing.nights()) and (
+    if existing and (existing.version() or existing.nights()) and (
         bound.upstream_url != config.upstream_url
         or bound.public_model != config.public_model
         or bound.upstream != config.upstream
@@ -532,12 +561,16 @@ def initialize(args, root):
     # server and how many, not one model (live: it showed a model the
     # machine could not train, as if it were the only one).
     count = len(exposed(config))
-    rows = [("Models", f"{count} from {server}, each as songe/…")]
+    # Agents group them under the Songe provider (opencode shows
+    # songe/songe/<name>), so the words name the provider, not a prefix (#72).
+    rows = [("Models", f"{count} from {server}, listed under Songe")]
     for path, _, result, _ in changes:
         agent = "opencode" if "opencode" in str(path) else "pi"
         picked = json.loads(result).get("model") if agent == "opencode" else None
         if isinstance(picked, str) and picked.startswith("songe/"):
-            how = f"default {picked.removeprefix('songe/')}"
+            # opencode shows it as songe/songe/<name>; the name alone is
+            # what the user finds under Songe (#72).
+            how = f"default {picked.removeprefix('songe/').removeprefix('songe/')}"
         else:
             how = "choose one with " + ("/models" if agent == "opencode" else "/model")
         rows.append(("Agent", f"{agent} → Songe models · {how}"))
@@ -559,9 +592,10 @@ def initialize(args, root):
         dependencies.display(commands)
         for *_, diff in changes:
             print(diff)
-    if not confirm_install(config, args):
+    if not confirm_install(config, args, root):
         print("Changes: none")
         return
+    existing = Store(root)
     if commands:
         with step("Downloading runtime", "Runtime installed"):
             dependencies.install(commands, root)
@@ -660,7 +694,7 @@ def preenable_model(args, root, config, ref, refs):
     if getattr(args, "show_diff", False):
         for *_, diff in changes:
             print(diff)
-    if not confirm_install(config, args):
+    if not confirm_install(config, args, root):
         return
     config.save(root)
     store = Store(root)
@@ -784,10 +818,10 @@ def next_step(config):
     if not routed:
         return (
             f"One step left · point your agent at http://127.0.0.1:{config.port}/v1"
-            " and pick a songe/… model"
+            " and pick a Songe model"
         )
     how = {"opencode": "in opencode with /models", "pi": "in pi with /model"}
-    return "One step left · pick a songe/… model " + ", ".join(how[a] for a in left)
+    return "One step left · pick a Songe model " + ", ".join(how[a] for a in left)
 
 
 def agent_name(path):
@@ -853,7 +887,8 @@ def main(argv=None):
                     f"Data directory has other files · {root}"
                     " · choose an empty or new --data-dir"
                 )
-        if command in {"init", "serve", "uninstall"} or (
+        # Init creates its data only once the user accepts (#72).
+        if command in {"serve", "uninstall"} or (
             command == "sleep" and args.dry_run
         ):
             store = Store(private_dir(root))

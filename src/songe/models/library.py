@@ -37,11 +37,14 @@ def _size(path):
         return None
 
 
-def _item(ref, *, loaded=False, size=None):
+def _item(ref, *, loaded=False, size=None, unread=False):
     return {
         "ref": ref,
         "size_bytes": size if size is not None else _size(ref.path),
         "loaded": loaded,
+        # Listed by the server, but Songe found no model files it can read
+        # (init offers only those): re-running init does not add it.
+        "unread": unread,
     }
 
 
@@ -73,7 +76,9 @@ def scan(config):
                             path,
                             model.get("architecture", ""),
                         )
-                        items[key] = _item(ref, size=model.get("sizeBytes"))
+                        items[key] = _item(
+                            ref, size=model.get("sizeBytes"), unread=True
+                        )
                     if isinstance(model.get("sizeBytes"), (int, float)):
                         items[key]["size_bytes"] = max(0, int(model["sizeBytes"]))
                 for model in _cli(config.lms, "ps"):
@@ -116,7 +121,14 @@ def scan(config):
                 Path("/songe-unavailable") / name,
                 details.get("family", ""),
             )
-            result.append(_item(ref, loaded=name in loaded, size=model.get("size")))
+            result.append(
+                _item(
+                    ref,
+                    loaded=name in loaded,
+                    size=model.get("size"),
+                    unread=name not in refs,
+                )
+            )
         return result
     if config.upstream == "llamacpp":
         root = config.upstream_url.rstrip("/").removesuffix("/v1")
@@ -211,6 +223,11 @@ def architecture_available(architecture, backend):
     return normalize(architecture) in names if names and architecture else None
 
 
+def embedding_name(name):
+    """An embedding model by its served name alone (text-embedding-…, bge-…)."""
+    return bool(re.search(r"embed(?:ding)?|bge-|e5-", str(name), re.I))
+
+
 def is_embedding(ref):
     embedding = ref.architecture in {
         "bert",
@@ -218,7 +235,7 @@ def is_embedding(ref):
         "nomic_bert",
         "jina-bert-v2",
         "gemma-embedding",
-    } or bool(re.search(r"embed(?:ding)?|bge-|e5-", ref.serving_id, re.I))
+    } or embedding_name(ref.serving_id)
     if ref.path.is_dir():
         metadata = (
             discovery.readable(
@@ -238,6 +255,21 @@ def is_embedding(ref):
         info = discovery.readable(ref.path, lambda: discovery.read_gguf(ref.path))
         embedding = embedding or bool(info and getattr(info, "embedding", False))
     return embedding
+
+
+def embedding_row(row):
+    """A listed model recorded as an embedding model: it can never chat, so
+    it is left out of model lists and agent settings (#72)."""
+    return row.get("reason") == "embedding model"
+
+
+SERVERS = {
+    "lmstudio": "LM Studio",
+    "ollama": "Ollama",
+    "llamacpp": "llama.cpp",
+    "mlx": "mlx-lm",
+    "vllm": "vLLM",
+}
 
 
 def support(config, ref, size, platform):
@@ -364,6 +396,9 @@ def summaries(config, store, scheduler=None):
         if row is None:
             state, reason = support(config, ref, item["size_bytes"], platform)
             row = {
+                # Not registered, so not in the agents' settings (#72):
+                # `songe models` says why.
+                "offered": "unread" if item.get("unread") else "after init",
                 "id": ref.serving_id,
                 "enabled": False,
                 "auto_dream": False,
@@ -387,6 +422,12 @@ def summaries(config, store, scheduler=None):
             row.update(
                 support="unsupported", status="unsupported", reason="embedding model"
             )
+        if ref.format == "mlx" and architecture_available(ref.architecture, "mlx") is False:
+            # LM Studio's and mlx-lm's servers load MLX files with mlx-lm;
+            # Songe's copy of it does not know this architecture, so the
+            # server may not load it either (#72). Whether it does is the
+            # server's own: it stays offered, with this said.
+            row["may_not_load"] = SERVERS.get(config.upstream, config.upstream)
         if "calibration paused · memory" in row.get("reason", ""):
             row["reason"] = "calibration paused · memory · retry when idle"
         row.update(

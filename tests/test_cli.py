@@ -1,3 +1,4 @@
+import os
 from types import SimpleNamespace
 
 import pytest
@@ -532,3 +533,180 @@ def test_init_applies_the_reviewed_change_after_the_new_service_edits_opencode(t
     cli.finish_initialization(config, args, root, changes, lambda: agents.proposed(config, root=root))
     written = _json.loads(path.read_text(encoding="utf-8"))
     assert written["theme"] == "user-or-service" and "songe" in _json.dumps(written["provider"])
+
+
+def fresh_install(tmp_path, monkeypatch, local):
+    """A first `songe init` against fake model servers only (#72)."""
+    from songe import agents, cli, launchd
+    from songe.models import ModelRef, discovery
+    from songe.platform import Accel, Memory
+
+    base = tmp_path / "model"
+    base.mkdir()
+    (base / "config.json").write_text('{"max_position_embeddings":4096}', encoding="utf-8")
+    platform = SimpleNamespace(
+        accelerators=lambda: [Accel("cpu", "test")],
+        service=lambda: SimpleNamespace(target=tmp_path / "service", available=lambda: True),
+        memory=lambda: Memory(2**30, 2**29),
+    )
+    monkeypatch.setattr("songe.platform.current", lambda: platform)
+    monkeypatch.setattr(cli, "detect_agent_binding", lambda: ("", ""))
+    refs = [ModelRef("ollama", "chosen:latest", "gguf", base, "test")] if local else []
+    monkeypatch.setattr(discovery, "ollama", lambda **kw: refs)
+    monkeypatch.setattr(cli, "upstream_model_ids", lambda url: ["one", "two"])
+    monkeypatch.setattr(cli.shutil, "which", lambda name: None)
+    monkeypatch.setattr(agents.Path, "home", lambda: tmp_path)
+    monkeypatch.setattr(agents, "proposed", lambda *a, **kw: [])
+    monkeypatch.setattr(agents, "apply", lambda *a: None)
+    monkeypatch.setattr(launchd, "install", lambda *a, **kw: None)
+    monkeypatch.setattr(cli.LocalClient, "snapshot", lambda self: {"service_running": True})
+    root = tmp_path / "data"
+    return root, [
+        "--data-dir", str(root), "init", "--upstream", "ollama",
+        "--launchd-target", str(tmp_path / "service"),
+    ]
+
+
+@pytest.mark.parametrize("local", [True, False])
+@pytest.mark.parametrize("answer", ["no terminal", "n"])
+def test_init_creates_nothing_until_the_user_accepts(tmp_path, monkeypatch, capsys, local, answer):
+    """Live (#72): init made the data folder and experience.sqlite3, then
+    stopped with "Terminal required · use --yes" (or was declined)."""
+    import io
+
+    from songe import cli
+
+    root, argv = fresh_install(tmp_path, monkeypatch, local)
+    if answer == "no terminal":
+        monkeypatch.setattr(cli.sys, "stdin", io.StringIO())
+        assert cli.main(argv) == 1
+        assert "Terminal required" in capsys.readouterr().err
+    else:
+        monkeypatch.setattr(cli.sys, "stdin", SimpleNamespace(isatty=lambda: True))
+        monkeypatch.setattr("builtins.input", lambda prompt: answer)
+        assert cli.main(argv) == 0
+    assert not root.exists()
+
+
+@pytest.mark.parametrize("local", [True, False])
+@pytest.mark.parametrize("how", ["--yes", "y"])
+def test_init_creates_its_data_once_accepted(tmp_path, monkeypatch, local, how):
+    from songe import cli
+    from songe.log import Store
+
+    root, argv = fresh_install(tmp_path, monkeypatch, local)
+    if how == "--yes":
+        argv.append("--yes")
+    else:
+        monkeypatch.setattr(cli.sys, "stdin", SimpleNamespace(isatty=lambda: True))
+        monkeypatch.setattr("builtins.input", lambda prompt: how)
+    assert cli.main(argv) == 0
+    assert (root / "config.toml").exists() and (root / "experience.sqlite3").exists()
+    if os.name != "nt":
+        assert root.stat().st_mode & 0o777 == 0o700
+    assert Store(root).get("paused") is False
+    if local:
+        assert Store(root).version()["artifact"] == str(tmp_path / "model")
+
+
+def test_reinit_declined_leaves_an_existing_install_as_it_was(tmp_path, monkeypatch):
+    from songe import cli
+
+    root, argv = fresh_install(tmp_path, monkeypatch, True)
+    assert cli.main([*argv, "--yes"]) == 0
+    names, saved = sorted(p.name for p in root.iterdir()), (root / "config.toml").read_bytes()
+    monkeypatch.setattr(cli.sys, "stdin", SimpleNamespace(isatty=lambda: True))
+    monkeypatch.setattr("builtins.input", lambda prompt: "n")
+    assert cli.main(argv) == 0
+    assert sorted(p.name for p in root.iterdir()) == names
+    assert (root / "config.toml").read_bytes() == saved
+
+
+@pytest.mark.parametrize("local", [True, False])
+def test_init_never_offers_an_embedding_model_to_agents(tmp_path, monkeypatch, local):
+    """Live (#72): LM Studio's embedding model was listed like a chat model."""
+    from songe import agents, cli
+    from songe.log import Store
+    from songe.models import ModelRef, discovery, registry
+    from songe.models.names import exposed
+
+    root, argv = fresh_install(tmp_path, monkeypatch, local)
+    embed = tmp_path / "nomic-embed-text-v1.5.gguf"
+    embed.write_bytes(b"")
+    refs = [
+        ModelRef("ollama", "chosen:latest", "gguf", tmp_path / "model", "test"),
+        ModelRef("ollama", "nomic-embed-text:latest", "gguf", embed, "nomic-bert"),
+    ]
+    monkeypatch.setattr(discovery, "ollama", lambda **kw: refs if local else [])
+    monkeypatch.setattr(
+        cli, "upstream_model_ids", lambda url: ["one", "text-embedding-nomic-embed-text-v1.5"]
+    )
+    offered = []
+    monkeypatch.setattr(
+        agents, "proposed", lambda config, **kw: offered.append(exposed(config)) or []
+    )
+    assert cli.main([*argv, "--yes"]) == 0
+    assert offered and all(
+        not any("embed" in name for name in names) for names in offered
+    )
+    assert not any("embed" in m["id"] for m in registry.entries(Store(root)))
+
+
+def test_init_again_offers_a_model_downloaded_since(tmp_path, monkeypatch):
+    """#72: a model added to the server after the first init was never
+    offered; `songe models` now says to run init again, and that adds it
+    without renaming or doubling the models already offered."""
+    from songe import agents, cli
+    from songe.config import Config
+    from songe.log import Store
+    from songe.models import ModelRef, discovery, registry
+    from songe.models.names import exposed
+
+    root, argv = fresh_install(tmp_path, monkeypatch, True)
+    first = ModelRef("ollama", "chosen:latest", "gguf", tmp_path / "model", "test")
+    other = tmp_path / "other.gguf"
+    other.write_bytes(b"")
+    found = [first, ModelRef("ollama", "other:latest", "gguf", other, "test")]
+    monkeypatch.setattr(discovery, "ollama", lambda **kw: list(found))
+    assert cli.main([*argv, "--yes"]) == 0
+    agents.migrate(Config.load(root), root, update_agents=False)  # as the service does
+    before = exposed(Config.load(root))
+    assert sorted(before) == ["songe/chosen-latest", "songe/other-latest"]
+    newer = tmp_path / "newer.gguf"
+    newer.write_bytes(b"")
+    found.append(ModelRef("ollama", "LFM2.5-24B:latest", "gguf", newer, "lfm2"))
+    offered = []
+    monkeypatch.setattr(
+        agents, "proposed", lambda config, **kw: offered.append(exposed(config)) or []
+    )
+    assert cli.main([*argv, "--yes"]) == 0
+    assert sorted(offered[-1]) == sorted([*before, "songe/LFM2.5-24B-latest"])
+    assert sorted(exposed(Config.load(root))) == sorted(offered[-1])
+    assert registry.find(Store(root), "LFM2.5-24B:latest")
+    assert Config.load(root).base_identifier == "chosen:latest"
+
+
+def test_init_names_models_the_way_the_agents_show_them(tmp_path, monkeypatch, capsys):
+    """#72: opencode lists songe/songe/<name> (provider songe, model
+    songe/<name>) while init said "pick a songe/… model"."""
+    import json
+
+    from songe import agents, cli
+
+    root, argv = fresh_install(tmp_path, monkeypatch, True)
+    opencode = tmp_path / ".config/opencode/opencode.json"
+    result = json.dumps({"model": "songe/songe/chosen-latest"}).encode()
+    monkeypatch.setattr(
+        agents, "proposed", lambda *a, **kw: [(opencode, None, result, "")]
+    )
+    monkeypatch.setattr(agents, "routing", lambda home=None: {"opencode": False})
+    monkeypatch.setattr(cli.sys, "stdin", SimpleNamespace(isatty=lambda: True))
+    monkeypatch.setattr("builtins.input", lambda prompt: "n")
+    assert cli.main(argv) == 0
+    out = capsys.readouterr().out
+    assert "1 from Ollama, listed under Songe" in out
+    assert "opencode → Songe models · default chosen-latest" in out
+    assert "songe/…" not in out
+    assert cli.next_step(cli.Config()) == (
+        "One step left · pick a Songe model in opencode with /models"
+    )

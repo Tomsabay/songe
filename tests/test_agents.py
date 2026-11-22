@@ -275,7 +275,7 @@ def test_init_ends_with_the_step_left(config, monkeypatch):
     from songe import cli
 
     monkeypatch.setattr(agents, "routing", lambda home=None: {"opencode": True, "pi": False})
-    assert cli.next_step(config) == "One step left · pick a songe/… model in pi with /model"
+    assert cli.next_step(config) == "One step left · pick a Songe model in pi with /model"
     monkeypatch.setattr(agents, "routing", lambda home=None: {"opencode": True})
     assert cli.next_step(config).startswith("Use your agent as usual")
     monkeypatch.setattr(agents, "routing", lambda home=None: {})

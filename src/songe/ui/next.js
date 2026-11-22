@@ -683,7 +683,7 @@ function modelView(id, ml, inv, paused = false) {
       ? quiet(ml, inv, ['Not learning yet', 'Turn on auto-dream to let it learn from your new conversations.'])
       : !ml?.pending?.conversations
         // Nothing recorded yet: the agent is probably not on a songe/ model.
-        ? quiet(ml, inv, ['No conversations yet', 'Pick a songe/… model in your agent (/models in opencode, /model in pi) and work as usual. Songe learns from those conversations.'])
+        ? quiet(ml, inv, ['No conversations yet', 'Pick a Songe model in your agent (/models in opencode, /model in pi) and work as usual. Songe learns from those conversations.'])
         : quiet(ml, inv, ['No Dream yet', `${plural(ml.pending.conversations, 'conversations')} collected so far. ${auto ? 'It dreams when your computer is idle, or press Dream.' : 'Auto-dream is off: press Dream to run one.'}`]));
     if (level !== 'off') node.append(nowLine(id, ml));
   } else {

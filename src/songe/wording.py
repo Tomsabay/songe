@@ -25,7 +25,7 @@ def readable(value):
         (r"select enabled model", "choose a model with learning on"),
         (
             r"select model · learning enabled \+ learnable experience",
-            "Choose New or All for a model, then pick a songe/… model in your agent.",
+            "Choose New or All for a model, then pick a Songe model in your agent.",
         ),
         (r"learnable experience", "conversations to learn from"),
         (r"held-out", "evaluation"),
@@ -71,7 +71,7 @@ def collecting_detail(detail):
     return f"{have}/{need} {noun}" + (unfit or "")
 
 
-USE_SONGE = "Pick a songe/… model in your agent"
+USE_SONGE = "Pick a Songe model in your agent"
 MEASURE_WAIT = re.compile(
     r"measuring training size|calibration required|not measured yet"
 )
@@ -390,12 +390,15 @@ def base_summary(model, data):
     )
     issue = model_problem(model)
     if model.get("support") == "unsupported" or model.get("status") == "unsupported":
-        return "Not supported yet", "Embedding model" if re.search(
+        detail = "Embedding model" if re.search(
             "embedding", model.get("reason") or "", re.I
         ) else re.sub(
             r"^Architecture$",
             "",
             re.sub(r" not supported yet$", "", readable(model.get("reason"))),
+        )
+        return "Not supported yet", " · ".join(
+            filter(None, (detail, may_not_load(model)))
         )
     if model_level(model) == "off" and not result and not conversations:
         return "", ""
@@ -513,11 +516,44 @@ def in_use(snapshot):
     return "proxy requests in flight" in str(activity.get("now") or "")
 
 
+NOT_OFFERED = {
+    "after init": "Not in your agents · run songe init again to add it",
+    "unread": "Not in your agents · Songe can't read its files",
+}
+
+
+def not_offered(model):
+    """Why a listed model is not in the agents' settings, or "" (#72)."""
+    files = model.get("files") or [model]
+    kinds = {f.get("offered") for f in files}
+    if not kinds or None in kinds:
+        return ""
+    return NOT_OFFERED["after init" if "after init" in kinds else "unread"]
+
+
+def may_not_load(model):
+    """Songe offers every chat model the server lists; for one whose MLX
+    files Songe's own MLX runtime cannot read, the server likely cannot
+    load it either (#72, LM Studio: "Model type lfm3 not supported")."""
+    server = next(
+        (
+            f["may_not_load"]
+            for f in [model, *(model.get("files") or [])]
+            if f.get("may_not_load")
+        ),
+        None,
+    )
+    return f"MLX version may not load in {server}" if server else ""
+
+
 def model_status(model, data, snapshot=None):
-    """One table cell; off models are quiet, unsupported models explain why."""
+    """One table cell; off models are quiet, unsupported models explain why,
+    and so does a model the agents do not list."""
     title, detail = model_summary(model, data, snapshot)
     if title == "Not supported yet":
-        return " · ".join(filter(None, (title, detail)))
+        return " · ".join(filter(None, (title, detail, not_offered(model))))
+    if why := not_offered(model):
+        return why
     return "" if model_level(model) == "off" else title
 
 

@@ -48,7 +48,7 @@ def test_three_lines_idle_and_calibration_progress(config, store, monkeypatch):
     state = snapshot(config, store, worker, live=True)
     assert state["activity"]["now"] == "calibrating base-test · 2/4"
     assert state["activity"]["next"] == (
-        "Pick a songe/… model in your agent · base-test learns from conversations"
+        "Pick a Songe model in your agent · base-test learns from conversations"
     )
     assert [key for key, value in lines(state)] == ["now", "next", "paused"]
 
@@ -411,15 +411,18 @@ def test_battery_and_memory_checkpoint_stops_take_priority(config, store):
     assert result["now"] == "waiting · pausing · not enough memory"
 
 
-def test_registered_embeddings_stay_visible_and_unscheduled(config, store, tmp_path):
+def test_registered_embeddings_are_not_listed_and_stay_unscheduled(config, store, tmp_path):
     path = tmp_path / "nomic-embed-text.gguf"
     ref = ModelRef("lmstudio", "nomic-embed-text", "gguf", path, "bert")
     registry.register(config, store, ref.serving_id, ref)
     row = registry.find(store, ref.serving_id)
     assert row["support"] == "unsupported"
     assert row["reason"] == "embedding model"
+    # Live (#72): `songe models` listed it as "Not supported yet · Embedding
+    # model"; it can never chat, so it is not listed at all.
     state = snapshot(config, store)
-    assert state["models"][0]["reason"] == "embedding model"
+    assert ref.serving_id not in {m["id"] for m in state["models"]}
+    assert all(m.get("reason") != "embedding model" for m in state["models"])
     registry.support(store, ref.serving_id, "pending", "legacy calibration pending")
     registry.migrate(config, store)
     assert registry.find(store, ref.serving_id)["reason"] == "embedding model"

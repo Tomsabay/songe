@@ -478,7 +478,7 @@ def activity(config, store, scheduler, training, models, *, live, ready=None):
         if phase == "calibrate" and target and not target.get("pending"):
             # Measuring finishes with nothing to learn yet; data is the wait.
             next_text = (
-                f"Pick a songe/… model in your agent · {name} learns from conversations"
+                f"Pick a Songe model in your agent · {name} learns from conversations"
             )
     elif target and store.get("requested_model") == target["id"]:
         # A pressed Deep Dream is pending: never "press Dream" again.

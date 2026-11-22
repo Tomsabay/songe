@@ -905,3 +905,74 @@ def test_scheduling_and_display_settings_keep_a_night_resumable(config):
         {"min_heldout": config.min_heldout + 1}, {"wake_scales": (1.0,)},
     ):
         assert training_fingerprint(replace(config, **change)) != before, change
+
+
+def test_songe_models_says_why_a_model_is_not_in_the_agents(
+    config, store, tmp_path, monkeypatch
+):
+    """Live (#72): LFM2.5-24B was in LM Studio but not in opencode, and
+    `songe models` said nothing about it; LFM3's MLX files were offered
+    although LM Studio's MLX engine could not load them."""
+    from songe.wording import model_status
+
+    weights(tmp_path, "used")
+    weights(tmp_path, "LFM2.5-24B-A2B-MLX-4bit", "lfm2_moe")
+    lfm3 = weights(tmp_path, "LFM3-1.7B-MLX-4bit", "lfm3")
+    write_json(lfm3 / "config.json", {"model_type": "lfm3", "quantization": {"bits": 4}})
+    # LM Studio lists it, but there is no config.json for Songe to read.
+    (tmp_path / "elsewhere/Linked-7B").mkdir(parents=True)
+    (tmp_path / "elsewhere/Linked-7B/model.safetensors").write_bytes(b"")
+    config.models_dir, config.lms, config.upstream = str(tmp_path), "fake-lms", "lmstudio"
+    refs = {r.serving_id: r for r in discovery.lmstudio(folder=tmp_path)}
+    registry.register(config, store, "used", refs["used"])
+    registry.register(config, store, lfm3.name, refs[lfm3.name])
+
+    def run(argv, **kwargs):
+        listed = [
+            {"path": p, "modelKey": p.lower(), "sizeBytes": 100}
+            for p in ("used", "LFM2.5-24B-A2B-MLX-4bit", lfm3.name, "elsewhere/Linked-7B")
+        ]
+        return SimpleNamespace(stdout=json.dumps(listed if argv[1] == "ls" else []))
+
+    monkeypatch.setattr(library.subprocess, "run", run)
+    monkeypatch.setattr(library, "architecture_available", lambda a, b: a != "lfm3")
+    items = scan_library(config)
+    monkeypatch.setattr(library, "scan", lambda c: items)
+    data = snapshot(config, store, SimpleNamespace(platform=platform(store.root)))
+    status = {m["name"]: model_status(m, {}, data) for m in data["models"]}
+    assert status["used"] == ""
+    assert status["LFM2.5-24B-A2B"] == (
+        "Not in your agents · run songe init again to add it"
+    )
+    assert status["linked-7b"] == "Not in your agents · Songe can't read its files"
+    assert status["LFM3-1.7B"] == (
+        "Not supported yet · lfm3 · MLX version may not load in LM Studio"
+    )
+
+
+def test_lmstudio_discovery_follows_linked_model_folders(tmp_path):
+    """`lms import --symbolic-link` (or a model kept on another disk) leaves
+    a linked folder in the library; Path.rglob skipped it, so LM Studio
+    listed a model Songe never offered (#72)."""
+    import os
+
+    library_dir, elsewhere = tmp_path / "models", tmp_path / "disk"
+    weights(library_dir, "pub/here")
+    weights(elsewhere, "LFM2.5-24B-A2B-MLX-4bit", "lfm2_moe")
+    (elsewhere / "q.gguf").write_bytes(b"")
+    try:
+        os.symlink(
+            elsewhere / "LFM2.5-24B-A2B-MLX-4bit",
+            library_dir / "pub/LFM2.5-24B-A2B-MLX-4bit",
+            target_is_directory=True,
+        )
+        # A link back up the tree is walked once, not forever.
+        os.symlink(
+            library_dir,
+            elsewhere / "LFM2.5-24B-A2B-MLX-4bit/back",
+            target_is_directory=True,
+        )
+    except OSError:
+        pytest.skip("symbolic links need extra rights here")
+    found = [r.serving_id for r in discovery.lmstudio(folder=library_dir)]
+    assert found == ["pub/LFM2.5-24B-A2B-MLX-4bit", "pub/here"]

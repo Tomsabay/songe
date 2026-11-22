@@ -82,6 +82,21 @@ def lmstudio_downloads(home=None, os_name=None):
     return home / ".lmstudio/models"
 
 
+def _library_folders(root):
+    """Every folder under the library, following linked folders (`lms import
+    --symbolic-link`, a model kept on another disk) once each. Path.rglob
+    skips them, so LM Studio listed models Songe never offered (#72)."""
+    seen = set()
+    for folder, dirs, files in os.walk(root, followlinks=True):
+        real = os.path.realpath(folder)
+        if real in seen:
+            dirs[:] = []
+            continue
+        seen.add(real)
+        dirs.sort()  # the same model under two links keeps one name
+        yield Path(folder), files
+
+
 def lmstudio(home=None, folder=None, os_name=None):
     root = Path(folder) if folder else lmstudio_downloads(home, os_name)
     # rglob silently yields nothing for a folder the OS denies (macOS privacy
@@ -95,8 +110,12 @@ def lmstudio(home=None, folder=None, os_name=None):
                 "your terminal under System Settings > Privacy & Security > "
                 "Files and Folders (Removable Volumes) or Full Disk Access."
             ) from exc
+    configs, ggufs = [], []
+    for folder, files in _library_folders(root):
+        configs += [folder / name for name in files if name == "config.json"]
+        ggufs += [folder / name for name in files if name.endswith(".gguf")]
     models = []
-    for config in sorted(root.rglob("config.json")):
+    for config in sorted(configs):
         if list(config.parent.glob("*.safetensors")):
             ref = readable(
                 config,
@@ -108,7 +127,7 @@ def lmstudio(home=None, folder=None, os_name=None):
             )
             if ref:
                 models.append(ref)
-    for path in sorted(root.rglob("*.gguf")):
+    for path in sorted(ggufs):
         info = readable(path, lambda path=path: read_gguf(path))
         if info:
             models.append(

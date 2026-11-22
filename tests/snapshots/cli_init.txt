@@ -9,7 +9,7 @@
 ✓ Connected pi
 ✓ Ready · http://127.0.0.1:7613/v1
 
-One step left · pick a songe/… model in pi with /model
+One step left · pick a Songe model in pi with /model
   songe open       dashboard
   songe status     what it is doing
   songe pause      stop learning
