@@ -162,6 +162,20 @@ def test_doctor_checks_the_users_server_not_the_owned_one(
     assert upstreams.endswith("1 models at http://127.0.0.1:8080/v1")
 
 
+def test_sleep_says_what_the_request_waits_for(tmp_path, monkeypatch, capsys):
+    """Live #66: "Learning requested", then nothing for minutes, no word why."""
+    from songe import cli
+
+    reply = {"ok": True, "waiting": "waiting for memory · tries again in 2m"}
+    monkeypatch.setattr(cli.LocalClient, "control", lambda self, action, **kw: reply)
+    assert main(["--data-dir", str(tmp_path / "data"), "sleep"]) == 0
+    out = capsys.readouterr().out
+    assert "Learning requested · not started yet · waiting for memory · tries again in 2m" in out
+    reply = {"ok": True, "waiting": None}
+    assert main(["--data-dir", str(tmp_path / "data"), "sleep"]) == 0
+    assert "not started yet" not in capsys.readouterr().out
+
+
 def test_cli_controls_use_local_api(tmp_path, monkeypatch):
     from songe import cli
 

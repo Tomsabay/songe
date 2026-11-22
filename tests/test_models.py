@@ -1122,3 +1122,116 @@ def test_forwarding_init_uses_an_unrecognized_server_as_openai_compatible(
     assert (config.upstream, config.upstream_url) == ("vllm", url)
     assert config.exposed_models == ["songe/qwen"]
     assert f"OpenAI-compatible · {url}" in capsys.readouterr().out
+
+
+async def test_an_automatic_run_stopped_for_memory_says_so_and_tries_again_later(
+    learners, monkeypatch
+):
+    """Live #66: the memory guard stopped an automatic run; the status said
+    only "a Deep Dream needs 1 practice scene", and songe sleep said nothing."""
+    import time as _time
+
+    from songe import schedule
+    from songe.memory import Snapshot, stopped_sample
+    from songe.platform import Accel, Memory
+    from songe.status import memory_hold
+    from songe.wording import status_lines
+    from tests.test_schedule import good
+
+    config, store = learners
+    registry.enable(store, "first", False)
+    registry.support(store, "second", "pending")  # its first measurement
+    platform = SimpleNamespace(
+        name="test",
+        memory=lambda: Memory(24 * 10**9, 11 * 10**9),
+        accelerators=lambda: [Accel("cuda", "fixture", 8 * 10**9, 8 * 10**9)],
+        keep_awake=lambda pid: None,
+    )
+    scheduler = ModelScheduler(config, store, SimpleNamespace(), platform)
+    scheduler.last_traffic -= 5000
+    monkeypatch.setattr(schedule, "probe", lambda p=None: good())
+
+    async def waited():
+        return 1
+
+    def stop():
+        scheduler.select("second")
+        scheduler.calibrating = True
+        scheduler.memory_stop_sample = stopped_sample(
+            Snapshot(24 * 10**9, 11 * 10**9, "normal"), "attributed_paging"
+        )
+        scheduler.process = SimpleNamespace(returncode=1, wait=waited)
+
+    learner = store.scoped("second")
+    learner.set("last_memory_baseline", {"available": 11 * 10**9})
+    stop()
+    await scheduler.finish()
+    hold = learner.get("memory_hold")
+    assert hold["try"] == 1 and hold["rule"] == "attributed_paging"
+    assert 50 < hold["retry_after"] - _time.time() <= schedule.MEMORY_BACKOFF
+    # Status says it was stopped for memory, why, and when it tries again.
+    data = snapshot(config, store, scheduler, live=True)
+    now = data["activity"]["now"]
+    assert "held for memory" in now and "swapping memory to disk" in now
+    assert "tries again in 1m" in now and "practice scene" not in now
+    assert dict(status_lines(data))["now"].startswith(
+        "Waiting for memory · Learning stopped at "
+    )
+    # The dashboard shows it on the model's page too.
+    from songe.cycle import deep_waiting
+
+    assert deep_waiting(learner, "second", None).startswith("Held for memory · ")
+    # songe sleep says what it waits for instead of nothing.
+    wait = await scheduler.sleep_wait()
+    assert wait.startswith("waiting for memory · learning stopped at ")
+    assert wait.endswith("tries again in 1m")
+
+    launched = []
+
+    async def spawn(*args, **kwargs):
+        launched.append(args)
+        return SimpleNamespace(pid=1, returncode=None)
+
+    monkeypatch.setattr(schedule.asyncio, "create_subprocess_exec", spawn)
+    monkeypatch.setattr(schedule, "guard", lambda *a, **kw: None)
+    await scheduler.tick()
+    assert not launched and scheduler.reason == "Waiting for free memory"
+    # A second stop in a row waits longer.
+    stop()
+    await scheduler.finish()
+    hold = learner.get("memory_hold")
+    assert hold["try"] == 2
+    assert hold["retry_after"] - _time.time() > 1.5 * schedule.MEMORY_BACKOFF
+    # After its retry time it tries again on its own.
+    learner.set("memory_hold", hold | {"retry_after": _time.time() - 1})
+    assert "tries again when this computer is idle" in memory_hold(learner)
+    await scheduler.tick()
+    assert launched and "songe.sleep.calibrate" in launched[0]
+    await scheduler.guard_task
+    # A run that ends any other way clears the hold.
+    scheduler.memory_stop_sample = None
+    scheduler.process = SimpleNamespace(returncode=0, wait=waited)
+    await scheduler.finish()
+    assert learner.get("memory_hold") is None
+
+
+def test_status_names_a_model_that_dreams_on_its_own(learners):
+    """Live #66: "Auto-dream is off" while the model's own row said On: the
+    status named another enabled model, one with auto-dream off."""
+    from songe.status import activity
+
+    config, store = learners
+    config.learning = "dreams"
+    for model in ("first", "second"):
+        registry.support(store, model, "trainable")
+    registry.set_auto_dream(store, "first", False)
+    scheduler = ModelScheduler(config, store, SimpleNamespace(), platform=SimpleNamespace())
+    assert scheduler.choose_model() is None  # nothing runnable: the fallback names one
+    models = registry.summaries(config, store)
+    status = activity(config, store, scheduler, None, models, live=True)
+    assert "Auto-dream is off" not in status["next"]
+    # Only when no model Dreams on its own does it say so.
+    registry.set_auto_dream(store, "second", False)
+    models = registry.summaries(config, store)
+    status = activity(config, store, scheduler, None, models, live=True)
+    assert status["next"] == "Auto-dream is off · press Dream to run one"

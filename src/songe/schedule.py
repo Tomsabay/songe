@@ -1885,6 +1885,52 @@ class ModelScheduler(Scheduler):
                 return flow_state(wait)
         return None
 
+    async def sleep_wait(self):
+        """`songe sleep`: what the request waits on before learning can
+        start, in a few words; None when nothing holds it (live #66:
+        "Learning requested", then nothing, and no word why)."""
+        from .models.library import model_name
+        from .models.registry import summaries
+        from .status import deep_step, memory_hold
+        from .wording import flow_state
+
+        if self.installation_store.get("paused", False):
+            return "learning is paused · songe resume"
+        if self.process:
+            return None  # Already working; songe status shows what.
+        rows = [
+            m
+            for m in summaries(self.installation_config, self.installation_store)
+            if m["enabled"] and m["support"] != "unsupported"
+        ]
+        if not rows:
+            return "no model is learning · songe models"
+        model = self.choose_model() or min(rows, key=lambda m: m.get("auto_dream") is False)["id"]
+        learner = self.installation_store.scoped(model)
+        if learner.get("memory_wait"):
+            return deep_step(learner).removeprefix("Deep Dream · ")
+        if hold := memory_hold(learner):
+            return "waiting for memory · " + hold.removeprefix("held for memory · ")
+        if learner.get("disk_wait"):
+            return flow_state(learner.get("disk_wait"))
+        if (
+            getattr(self.installation_config, "learning", "") == "dreams"
+            and not any(m.get("auto_dream", True) for m in rows)
+        ):
+            # A request starts nothing by itself here; Dream does (candidates).
+            return f"auto-dream is off for {model_name(model)} · press Dream on its page (songe open)"
+        p = await asyncio.to_thread(probe, self.platform)
+        hardware = reason(
+            replace(self.config_for(model), calibration_available=True),
+            p,
+            enough=True,
+            immediate=True,
+            adaptive=True,
+        )
+        if hardware != "Will sleep when idle":
+            return flow_state(hardware).removeprefix("waiting: ")
+        return None
+
     async def next_model(self):
         from .sleep.calibration_state import needs_growth
 
@@ -1968,9 +2014,12 @@ class ModelScheduler(Scheduler):
         stopped_by = self.interrupted_by
         await super().finish()
         launch, self.launch = getattr(self, "launch", None), None
-        if launch and launch["requested"] and launch["model"] == model:
+        pressed = bool(launch and launch["requested"] and launch["model"] == model)
+        if pressed:
             self.carry_on(model, launch, calibrating=calibrating, failed=failed,
                           interrupted=interrupted, stopped_by=stopped_by, memory_stop=memory_stop)
+        if model and not (pressed and memory_stop):  # a pressed Dream's own wait: carry_on
+            self.note_memory_hold(model, memory_stop=memory_stop, calibrating=calibrating)
         if calibrating and model:
             self.config = self.config_for(model)
             saved = self.store.get("calibration", {})
@@ -2014,6 +2063,42 @@ class ModelScheduler(Scheduler):
                         "calibration failed · retries automatically",
                     )
         self.active_model = None
+
+    def note_memory_hold(self, model, *, memory_stop, calibrating):
+        """An automatic run (not a pressed Deep Dream: carry_on) that the
+        memory guard stopped holds this model's learning for MEMORY_BACKOFF
+        times the stops in a row, shown in the status (status.memory_hold),
+        then tries again (live #66: nothing said why it stopped). Measuring
+        that reached this machine's edge is the measurement's answer, not a
+        crowded machine (as in carry_on). Any other end clears the hold."""
+        learner = self.installation_store.scoped(model)
+        edge = calibrating and any(
+            r.get("sequence") for r in (learner.get("calibration") or {}).get("rows", [])
+        )
+        if not memory_stop or edge:
+            learner.set("memory_hold", None)
+            return
+        stops = (learner.get("memory_hold") or {}).get("try", 0) + 1
+        sample = learner.get("last_memory_stop") or {}
+        now = time.time()
+        learner.set("memory_hold", {
+            "at": now, "try": stops,
+            "rule": (sample.get("stop_reason") or {}).get("rule"),
+            # Free before the run (the stop's own reading includes the run).
+            "available": (learner.get("last_memory_baseline") or {}).get("available"),
+            "retry_after": now + min(MEMORY_BACKOFF * stops, EMPTY_RUN_WAIT_MAX),
+        })
+
+    def memory_held(self, wait):
+        """A memory wait or hold still in force: before its retry time,
+        unless clearly more memory is free now."""
+        if not wait or time.time() >= wait.get("retry_after", 0):
+            return False
+        try:
+            free = self.platform.memory().available
+        except Exception:  # noqa: BLE001
+            free = 0
+        return not wait.get("available") or free < wait["available"] * 1.3 + 1e9
 
     def clear_stale_waits(self, model, learner):
         """A memory wait with no pending request (or next to a stop note) is
@@ -2798,6 +2883,18 @@ class ModelScheduler(Scheduler):
             # A new Deep Dream starts only in a long quiet period, or when
             # asked; one under way resumes in any pause.
             self.reason = "Waiting for a long quiet period"
+            self.active_model = None
+            return
+        if (
+            model is not None
+            and self.installation_store.get("requested_model") != model
+            and await asyncio.to_thread(
+                self.memory_held, self.installation_store.scoped(model).get("memory_hold")
+            )
+        ):
+            # Its last automatic run was stopped for memory: not before its
+            # retry time (status.memory_hold says when). Dream skips it.
+            self.reason = "Waiting for free memory"
             self.active_model = None
             return
         if model is None:

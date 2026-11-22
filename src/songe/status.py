@@ -190,6 +190,34 @@ def deep_step(store):
     return "Deep Dream · getting ready to train"
 
 
+# What stopped an automatic run, by the memory guard's rule (memory.guard).
+HOLD_CAUSES = {
+    "attributed_paging": "this computer was swapping memory to disk",
+    "process_paging": "this computer was swapping memory to disk",
+    "critical_pressure": "memory pressure was critical",
+    "pressure_escalation": "memory pressure rose",
+}
+
+
+def memory_hold(store, now=None):
+    """An automatic run the memory guard stopped (ModelScheduler.note_memory_hold):
+    one line saying so and when it tries again, or None (live #66: status
+    only said "a Deep Dream needs 1 practice scene")."""
+    hold = store.get("memory_hold")
+    if not hold:
+        return None
+    now = time.time() if now is None else now
+    cause = HOLD_CAUSES.get(hold.get("rule"), "free memory ran low")
+    at = time.strftime("%H:%M", time.localtime(hold.get("at") or now))
+    left = (hold.get("retry_after") or 0) - now
+    when = (
+        f"tries again in {duration(max(left, 60))}"
+        if left > 0
+        else "tries again when this computer is idle"
+    )
+    return f"held for memory · learning stopped at {at} · {cause} · {when}"
+
+
 def practice_wait(config, store, supported):
     """What learning waits on under learning = "dreams", in the scheduler's
     own terms (ModelScheduler.enough): kept practice to train on, held-out
@@ -243,12 +271,20 @@ def activity(config, store, scheduler, training, models, *, live, ready=None):
     target = next((m for m in models if m["id"] == candidate), None)
     if target is None:
         # With nothing runnable, name the enabled model so Next says what it
-        # waits for (data) instead of asking the user to choose a model.
+        # waits for (data) instead of asking the user to choose a model. One
+        # that Dreams on its own first: the scheduler starts work by itself
+        # only for those (live #66: "Auto-dream is off" named another model
+        # while the one learning showed On).
         target = next(
-            (
-                m
-                for m in models
-                if m.get("enabled") and m.get("support") != "unsupported"
+            iter(
+                sorted(
+                    (
+                        m
+                        for m in models
+                        if m.get("enabled") and m.get("support") != "unsupported"
+                    ),
+                    key=lambda m: m.get("auto_dream") is False,
+                )
             ),
             None,
         )
@@ -503,6 +539,20 @@ def activity(config, store, scheduler, training, models, *, live, ready=None):
         # never "press Dream" while it is pending.
         now = deep_step(store.scoped(target["id"]))
         next_text = "Close some apps to free memory · it starts on its own"
+    elif (
+        target
+        and live
+        and not training
+        and not ready
+        and not paused
+        and not stopping
+        and not reading
+        and (hold := memory_hold(store.scoped(target["id"])))
+    ):
+        # An automatic run the memory guard stopped: that, and when it tries
+        # again, not what the next Dream would wait for.
+        now = "waiting · " + hold
+        next_text = "Closing some apps helps · it tries again on its own"
     return {
         "now": now or f"waiting · {reason}",
         "next": next_text,

@@ -946,8 +946,14 @@ def main(argv=None):
                 print(json.dumps(isolated(config, store, dry_run=True), indent=2))
             else:
                 # --now is the default; the flag stays for older scripts.
-                local.control("sleep_now")
-                result(f"Learning requested · {NAME} status")
+                reply = local.control("sleep_now") or {}
+                # Never a request that silently does nothing: what it waits on.
+                waiting = reply.get("waiting") if isinstance(reply, dict) else None
+                result(
+                    f"Learning requested · not started yet · {waiting} · {NAME} status"
+                    if waiting
+                    else f"Learning requested · {NAME} status"
+                )
         elif command == "forget":
             if confirm("Delete experience and examples?", args.yes):
                 local.control("forget", confirm=True)

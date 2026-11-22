@@ -620,7 +620,11 @@ def deep_waiting(store, model, current):
     # A pressed Deep Dream still pending (its model named, or the only
     # request there is while it waits for memory).
     if asked != model and not (store.get("requested_sleep") and asked is None and store.get("fit_wait")):
-        return None
+        # An automatic run the memory guard stopped: why, and when it tries again.
+        from .status import memory_hold
+
+        hold = memory_hold(store)
+        return hold[0].upper() + hold[1:] if hold else None
     return deep_step(store)
 
 

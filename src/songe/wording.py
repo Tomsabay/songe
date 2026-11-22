@@ -151,6 +151,10 @@ def status_copy(data):
         return "Connect a model", "Run songe init"
     if "learning off for all models" in reason:
         return "Learning off", "Turn on a model below"
+    if reason.startswith("held for memory · "):
+        # An automatic run the memory guard stopped: when, why and when it
+        # tries again (status.memory_hold), all of it.
+        return "Waiting for memory", capitalize(reason.removeprefix("held for memory · "))
     if "memory" in reason and raw.startswith("waiting"):
         measurement = re.search(r"\d[\d.]* GB free(?:, needs [\d.]+ GB)?", reason)
         detail = measurement[0] + " · " if measurement else ""

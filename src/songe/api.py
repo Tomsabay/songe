@@ -797,6 +797,14 @@ def api_routes(config, store, scheduler=None, *, release=None):
                         scheduler.interrupt("paused")
                 elif action == "sleep_now":
                     await asyncio.to_thread(store.set, "requested_sleep", True)
+                    # What it waits on, if it cannot start now (never a
+                    # request that silently does nothing).
+                    waiting = (
+                        await scheduler.sleep_wait()
+                        if hasattr(scheduler, "sleep_wait")
+                        else None
+                    )
+                    return JSONResponse({"ok": True, "waiting": waiting})
                 elif action == "dream":
                     # One model, now: read its new replies whatever the
                     # amount; train too when everything that waits on is met.
@@ -1057,7 +1065,7 @@ class LocalClient:
                     raise RuntimeError(
                         response.json().get("error", response.reason_phrase)
                     )
-                return
+                return response.json()
         except (httpx.ConnectError, httpx.ConnectTimeout):
             pass
         store = Store(self.root)
