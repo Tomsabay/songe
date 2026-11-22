@@ -1253,4 +1253,16 @@ def doctor(config, root, local):
         )
     except OSError as exc:
         print(f"Disk: unavailable · {path} · {exc}")
+    # Recordings grow in the data folder, which can be on another disk than
+    # the models (an external drive); show its free space too.
+    try:
+        from .artifacts.storage import volume
+
+        if volume(root) != volume(path):
+            data = shutil.disk_usage(root if root.exists() else volume(root))
+            print(
+                f"Data disk: {data.free / 1e9:.1f} of {data.total / 1e9:.1f} GB free at {root}"
+            )
+    except OSError as exc:
+        print(f"Data disk: unavailable · {root} · {exc}")
     return problems

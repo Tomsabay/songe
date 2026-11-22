@@ -223,6 +223,43 @@ def test_doctor_counts_a_single_file_model(tmp_path, monkeypatch, capsys):
     assert disk.endswith("; model 0.3 GB")
 
 
+def test_doctor_shows_the_data_disk_when_models_are_elsewhere(tmp_path, monkeypatch, capsys):
+    # #69: with models on an external drive, the data folder's disk (where
+    # recordings grow) was never shown.
+    from pathlib import Path
+
+    import httpx
+
+    from songe import cli
+    from songe.artifacts import storage
+    from songe.config import Config
+
+    def down(*args, **kwargs):
+        raise httpx.ConnectError("stopped")
+
+    monkeypatch.setattr(httpx.Client, "get", down)
+    monkeypatch.setattr(cli, "measured_hardware", lambda: ("linux", 1, 1, "cpu"))
+    drive = tmp_path / "drive"
+    drive.mkdir()
+    model = drive / "model.gguf"
+    model.write_bytes(b"GGUF")
+    root = tmp_path / "data"
+    Config(upstream="llamacpp", model=str(model)).save(root)
+    monkeypatch.setattr(
+        storage, "volume", lambda path: drive if drive in Path(path).resolve().parents else tmp_path
+    )
+    main(["--data-dir", str(root), "doctor"])
+    lines = capsys.readouterr().out.splitlines()
+    data = [line for line in lines if line.startswith("Data disk:")]
+    assert len(data) == 1 and data[0].endswith(f"GB free at {root}")
+    # One disk for both: no second line.
+    monkeypatch.setattr(storage, "volume", lambda path: tmp_path)
+    main(["--data-dir", str(root), "doctor"])
+    assert not any(
+        line.startswith("Data disk:") for line in capsys.readouterr().out.splitlines()
+    )
+
+
 def test_doctor_recognizes_agent_v2_and_live_service(tmp_path, monkeypatch, capsys):
     import json
 
