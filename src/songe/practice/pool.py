@@ -186,6 +186,7 @@ def heldout_fill(store, missing):
 def drift_steps(store):
     """The drift set: confirmed successes, each at the request that produced
     the checked action. Their session is their conversation (for clustering)."""
+    from ..parts import request_of
     from ..reading.store import signals
 
     steps, seen = [], set()
@@ -198,11 +199,8 @@ def drift_steps(store):
             if exchange in seen:
                 continue
             seen.add(exchange)
-            row = db.execute("SELECT request FROM exchanges WHERE id=?", (exchange,)).fetchone()
-            if not row:
-                continue
-            request = json.loads(row[0])
-            if not request.get("messages"):
+            request = request_of(db, exchange)
+            if not isinstance(request, dict) or not request.get("messages"):
                 continue
             steps.append(
                 {

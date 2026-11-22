@@ -257,6 +257,35 @@ States: `awake` (serving, recording) → `settling` (working in an idle gap) →
 - `scoreboard`: day, model_version, repeat_error_rate, steps_per_task, tool_call_valid_rate, general_drift — computed from daytime logs only.
 - `slices`: started, ended, phase, units_done, interrupted_by.
 
+### Repeated parts stored once (schema v3, `songe/parts.py`)
+
+Every agent request resends its system prompt, tools and whole history, and
+each step copies a request's history (context) and what followed (hindsight,
+evidence). `exchanges.request` and `steps.payload` are stored as a skeleton
+plus `refs` JSON `{key: id | [ids]}`: every item but the last of a message
+list (`messages`; `context`, `hindsight`, `evidence`) and any other top-level
+value of 1 KB or more is a row of `parts` (its exact `json.dumps` text, once
+per SHA-256). The last list item stays in the skeleton, so SQL on it
+(`$.hindsight[#-1].role`, compaction markers, non-empty checks) is unchanged.
+Readers use `parts.request` / `parts.payload` / `parts.request_of` and get the
+recorded value exactly; a row without `refs` is plain JSON (older rows, a
+store read without upgrading it). `part_uses` counts referencing rows through
+triggers; `parts.collect` deletes unused parts in the deleting transaction.
+`steps.evidence` (a copy of the payload's evidence no reader used) is `[]`.
+
+Upgrading adds the tables, columns and triggers in Store's schema
+transaction and sets `user_version` 3 (an older Songe refuses the store). The
+guarded experience child then rewrites older rows (`recordings.dedupe`) in
+batches of 16, each one transaction with its cursor in `state`
+(`parts_cursor_<table>`): a stop loses nothing and the next run resumes. Each
+rewritten row is read back and compared first; one that differs stays plain.
+In an idle gap with no worker, reading or request, the service gives freed
+space back (`recordings.compact`): a store made before v3 is rewritten once
+(`VACUUM`, switching to incremental auto-vacuum, only with room for two
+copies), then space returns in 16 MiB steps. New stores start incremental. A
+recording waiting on the write lock retries (up to a minute) instead of being
+lost.
+
 ### Rewind lessons (additive v2 table)
 
 `lessons` stores `(id, model_id)` plus `group_key`, JSON `payload`,

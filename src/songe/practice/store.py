@@ -153,11 +153,13 @@ def source(store, signal):
     timeline (for the copy check)."""
     step = min(int(n) for n in signal["exchanges"])
     exchange = signal["exchanges"][str(step)]
+    from ..parts import request_of
+
     with store.connect() as db:
-        row = db.execute("SELECT request FROM exchanges WHERE id=?", (exchange,)).fetchone()
+        request = request_of(db, exchange)
         ids = timeline.sessions(db).get(signal["session"], [])
         rows = timeline.load(db, ids) if ids else []
-    return (json.loads(row[0]) if row else None), timeline.build(rows)
+    return request, timeline.build(rows)
 
 
 def project_name(scene):

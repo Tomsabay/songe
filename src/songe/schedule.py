@@ -2805,6 +2805,27 @@ class ModelScheduler(Scheduler):
         )
         logger.info("served_contexts %s · agents updated %s", merged, len(changed))
 
+    # An idle service looks at the recordings' space this often: the check is
+    # a few PRAGMA reads, and space freed since waits at most this long.
+    TIDY_SECONDS = 600.0
+
+    async def tidy_recordings(self):
+        """In an idle gap with nothing else running (no worker, reading or
+        request): the recordings' upkeep (recordings.tidy), off the event
+        loop. Never holds the admission lock, so a request is never held."""
+        now = time.monotonic()
+        if now - getattr(self, "tidied_at", -self.TIDY_SECONDS) < self.TIDY_SECONDS:
+            return
+        if self.process or self.reading_busy() or any(self.in_flight.values()):
+            return
+        self.tidied_at = now
+        from .recordings import tidy
+
+        try:
+            await asyncio.to_thread(tidy, self.installation_store)
+        except Exception:
+            logger.exception("recordings_tidy_failed")
+
     async def tick(self):
         from .models import registry
 
@@ -2849,6 +2870,7 @@ class ModelScheduler(Scheduler):
         if time.monotonic() - self.last_traffic < threshold and not requested:
             self.reason = "Waiting for an idle gap"
             return
+        await self.tidy_recordings()
         await self.review_replies()
         quiet = time.monotonic() - self.last_traffic
         # Reading happens only inside a Dream. After the Quick quiet time, an

@@ -544,8 +544,6 @@ def moment(store, lesson):
     """Where a lesson mattered: the logged request at the step the agent got
     wrong, or (for a rule the user stated) the last request before their
     message. Returns {"request", "asked", "feedback"} or None."""
-    import json as _json
-
     from .reading import timeline
 
     by_id = {s["id"]: s for s in reading.signals(store)}
@@ -563,9 +561,10 @@ def moment(store, lesson):
                 exchange = reacted_to(items[: s["item"]], s.get("text") or "")
         if exchange is None:
             continue
+        from .parts import request_of
+
         with store.connect() as db:
-            row = db.execute("SELECT request FROM exchanges WHERE id=?", (exchange,)).fetchone()
-        request = _json.loads(row[0]) if row else None
+            request = request_of(db, exchange)
         if not isinstance(request, dict) or not request.get("messages"):
             continue
         from .steps import CONTINUED

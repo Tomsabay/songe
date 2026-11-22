@@ -7,6 +7,7 @@ import json
 import httpx
 
 from songe.models import registry
+from songe.parts import request_of
 from songe.reading import store as reading
 from songe.reading.client import Reader, Stopped
 
@@ -343,7 +344,8 @@ def test_a_compacted_session_stays_one_session_and_titles_are_skipped(store):
 
     record_session(store)
     with store.connect() as db:
-        history = json.loads(db.execute("SELECT request FROM exchanges ORDER BY id DESC LIMIT 1").fetchone()[0])["messages"]
+        last = db.execute("SELECT MAX(id) FROM exchanges").fetchone()[0]
+        history = request_of(db, last)["messages"]
     # The agent compacts: its request still carries the history.
     summary = "## Objective The user wants the failing test fixed in x.py."
     store.record("/v1/chat/completions",
@@ -441,8 +443,7 @@ def test_a_pi_compaction_is_not_a_conversation_and_its_continuation_joins(store)
     assert len(found) == 1  # one conversation: the summariser call joined it, the continuation too
     (ids,) = found.values()
     with store.connect() as db:
-        kinds = [timeline.kind_of(json.loads(db.execute("SELECT request FROM exchanges WHERE id=?", (i,)).fetchone()[0]))
-                 for i in ids]
+        kinds = [timeline.kind_of(request_of(db, i)) for i in ids]
     assert kinds.count("compaction") == 1
 
 
