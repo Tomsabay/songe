@@ -818,3 +818,31 @@ async def test_lms_restart_retains_an_unconfirmed_pending_load(tmp_path, monkeyp
     assert not fresh.memory_watcher.done()
     fresh.memory_watcher.cancel()
     await asyncio.gather(fresh.memory_watcher, return_exceptions=True)
+
+
+async def test_memory_watcher_unload_does_not_swallow_its_own_cancellation():
+    # Python 3.11's asyncio.wait_for returned normally when the task running it
+    # was cancelled after the inner call had already finished, so the watcher
+    # above could keep looping after cancel() and hang the test.
+    from songe.upstream.protection import unload_within_grace
+
+    async def unload(version):
+        return None
+
+    upstream = SimpleNamespace(
+        config=SimpleNamespace(guard_grace_seconds=3.0), unload=unload
+    )
+
+    async def watcher():
+        # Bounded, so a swallowed cancel fails this test instead of hanging it.
+        for _ in range(3):
+            await unload_within_grace(upstream, {"identifier": "alias"})
+            await asyncio.sleep(0.01)
+
+    for ticks in range(1, 6):
+        task = asyncio.create_task(watcher())
+        for _ in range(ticks):
+            await asyncio.sleep(0)
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        assert task.cancelled(), ticks

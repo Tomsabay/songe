@@ -52,6 +52,14 @@ async def admit_load(upstream, version):
     )
 
 
+async def unload_within_grace(upstream, version):
+    # Not asyncio.wait_for: on Python 3.11 it returns normally when the task
+    # running it is cancelled just as the inner call finishes, so the memory
+    # watcher could swallow its own cancellation and never stop.
+    async with asyncio.timeout(getattr(upstream.config, "guard_grace_seconds", 3.0)):
+        await upstream.unload(version)
+
+
 def guarded_load(method):
     @wraps(method)
     async def protected(self, version):
@@ -112,10 +120,7 @@ def guarded_load(method):
                 try:
                     for owned in list(self.owned.values()):
                         if owned.get("reclaim"):
-                            await asyncio.wait_for(
-                                self.unload(owned),
-                                getattr(self.config, "guard_grace_seconds", 3.0),
-                            )
+                            await unload_within_grace(self, owned)
                     sample = await asyncio.to_thread(admit, self.memory_platform)
                     if escalated(self.memory_baseline, sample) or paging_grew(
                         self.memory_baseline, sample
@@ -139,10 +144,7 @@ def guarded_load(method):
                     # instances or sampling again. Pending claims remain guarded.
                     for owned in unfinished():
                         with contextlib.suppress(Exception):
-                            await asyncio.wait_for(
-                                self.unload(owned),
-                                getattr(self.config, "guard_grace_seconds", 3.0),
-                            )
+                            await unload_within_grace(self, owned)
                     if not unfinished() and not self.allocations:
                         return
                 await asyncio.sleep(getattr(self.config, "guard_min_interval", 0.1))
