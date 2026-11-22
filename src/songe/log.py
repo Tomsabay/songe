@@ -890,6 +890,7 @@ class Store:
             "INSERT OR REPLACE INTO step_signals VALUES (?,?)",
             (item["id"], json.dumps(signal_counts([item]))),
         )
+        old = db.execute("SELECT refs FROM steps WHERE id=?", (item["id"],)).fetchone()
         payload, refs = parts.pack(db, item, parts.STEP_LISTS)
         db.execute(
             "INSERT INTO steps(id,conversation,split,signal,strength,evidence,answer_hint,env_fingerprint,retired_at,retired_reason,payload,refs) VALUES (?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET conversation=excluded.conversation,signal=excluded.signal,strength=excluded.strength,evidence=excluded.evidence,answer_hint=excluded.answer_hint,payload=excluded.payload,refs=excluded.refs",
@@ -912,6 +913,10 @@ class Store:
                 refs,
             ),
         )
+        if old and old[0]:
+            # Parts only the replaced payload used (a hindsight that grew
+            # keeps them all; a changed one frees some).
+            parts.collect(db, parts.ids_of(old[0]))
 
     def sync_steps(self, steps):
         """Retire evidence only when a tool it actually used changes schema.

@@ -289,3 +289,46 @@ def test_upkeep_waits_while_the_experience_child_runs(store):
         acquire(held)
         assert recordings.tidy(store) is None
     assert recordings.tidy(store) == 0  # nothing worth giving back
+
+
+def test_an_unreadable_old_row_is_skipped_and_the_rest_goes_on(tmp_path):
+    root = tmp_path / "old"
+    session = looping_session(20)
+    old_store(root, session)
+    db = sqlite3.connect(root / "experience.sqlite3")
+    db.execute("UPDATE exchanges SET request='{not json' WHERE id=3")
+    db.commit()
+    db.close()
+    store = Store(root)
+    assert recordings.dedupe(store) == 19
+    assert recordings.dedupe(store) == 0  # not stuck on it
+    with store.connect() as db:
+        assert db.execute("SELECT request FROM exchanges WHERE id=3").fetchone()[0] == "{not json"
+
+
+def test_parts_a_replaced_step_no_longer_uses_are_collected(store):
+    for request, response in looping_session(3):
+        store.record("/v1/chat/completions", request, response)
+    store.reconstruct()
+    step = store.active_steps()[0]
+    with store.connect() as db:
+        count = db.execute("SELECT COUNT(*) FROM parts").fetchone()[0]
+    edited = step | {"hindsight": [{"role": "tool", "content": "rewritten " * 200}] * 3}
+    store.sync_steps([edited])
+    store.sync_steps([step])  # back: the rewritten part is used by nothing
+    with store.connect() as db:
+        assert db.execute("SELECT COUNT(*) FROM parts").fetchone()[0] == count
+        assert db.execute("SELECT COUNT(*) FROM part_uses WHERE n<=0").fetchone()[0] == 0
+    assert next(s for s in store.active_steps() if s["id"] == step["id"]) == step
+
+
+def test_upkeep_collects_parts_nothing_uses(store):
+    for request, response in looping_session(3):
+        store.record("/v1/chat/completions", request, response)
+    with store.connect() as db:
+        db.execute("BEGIN IMMEDIATE")
+        parts._put(db, ["{\"orphan\": true}"])  # e.g. a failed rewrite's
+    recordings.compact(store)
+    with store.connect() as db:
+        assert db.execute("SELECT COUNT(*) FROM part_uses WHERE n<=0").fetchone()[0] == 0
+    assert len(store.exchanges()) == 3

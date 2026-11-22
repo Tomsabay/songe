@@ -58,7 +58,13 @@ def dedupe(store, stop=None):
                 for row in rows:
                     if row["body"] is None:
                         continue
-                    value = json.loads(row["body"])
+                    try:
+                        value = json.loads(row["body"])
+                    except ValueError:
+                        # Unreadable before as after: left as it is, and the
+                        # cursor moves past it so the rest goes on.
+                        logger.warning("dedupe_unreadable %s %s", table, row["k"])
+                        continue
                     skeleton, refs = parts.pack(db, value, lists)
                     if refs is None:
                         continue  # nothing large or repeated in it
@@ -68,6 +74,7 @@ def dedupe(store, stop=None):
                         # back differently: it stays as it is (its unused
                         # parts are collected later).
                         logger.warning("dedupe_mismatch %s %s", table, row["k"])
+                        parts.collect(db, parts.ids_of(refs))
                         continue
                     db.execute(
                         f"UPDATE {table} SET {column}=?, refs=? WHERE {key}=?",
@@ -129,6 +136,12 @@ def compact(store, minimum=COMPACT_MIN_BYTES):
     before Songe could do this in steps is rewritten once (VACUUM, while
     nothing else runs: the caller waits for an idle moment); after that
     space goes back in short steps. Returns the bytes given back."""
+    with store.connect() as db:
+        # Parts nothing uses any more (normally collected where they were
+        # freed); safe in one write transaction: a part and the row using it
+        # are always written together.
+        db.execute("BEGIN IMMEDIATE")
+        parts.collect(db)
     used, free, mode = sizes(store)
     if free < minimum:
         return 0
