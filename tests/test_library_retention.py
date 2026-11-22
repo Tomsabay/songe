@@ -975,4 +975,5 @@ def test_lmstudio_discovery_follows_linked_model_folders(tmp_path):
     except OSError:
         pytest.skip("symbolic links need extra rights here")
     found = [r.serving_id for r in discovery.lmstudio(folder=library_dir)]
-    assert found == ["pub/LFM2.5-24B-A2B-MLX-4bit", "pub/here"]
+    # Each found once; the order follows the platform's path sorting.
+    assert sorted(found) == ["pub/LFM2.5-24B-A2B-MLX-4bit", "pub/here"]
