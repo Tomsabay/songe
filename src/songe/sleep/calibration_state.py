@@ -42,7 +42,19 @@ def policy_key(config):
 
 
 def pool_key(steps):
-    return digest(sorted((s["id"], revision_id(s)) for s in steps))
+    return revisions_key({s["id"]: revision_id(s) for s in steps})
+
+
+def revisions_key(revisions):
+    return digest(sorted(revisions.items()))
+
+
+def sample_revisions(store):
+    """sample_pool's {id: revision} without decoding steps, where the store
+    can count them in SQL (an offline/legacy store decodes)."""
+    if hasattr(store, "sample_revisions"):
+        return store.sample_revisions()
+    return {s["id"]: revision_id(s) for s in sample_pool(store)}
 
 
 def pending_keys(store):
@@ -106,8 +118,10 @@ _GROWTH = {}
 
 
 def needs_growth(config, store):
-    """Cached until the store is written or the policy changes: the pool scan
-    decodes every step, and dashboards ask on each refresh."""
+    """Cached until the store is written or the policy changes; dashboards
+    and the scheduler ask on each refresh. While measuring, the store is
+    written every few seconds, so the answer is mostly recomputed: the pool
+    is read in SQL (Store.sample_revisions), never decoded."""
     from ..log import change_mark
 
     path = getattr(store, "path", None)
@@ -169,7 +183,7 @@ def _needs_growth(config, store):
     if progress:
         if progress.get("policy") != policy_key(config):
             return True
-        if progress.get("pool") != pool_key(sample_pool(store)):
+        if progress.get("pool") != revisions_key(sample_revisions(store)):
             return True
         pending = pending_keys(store)
         # Scoring is not evidence that an intact sample fitted a measured
@@ -185,7 +199,9 @@ def _needs_growth(config, store):
         return not progress.get("complete", False)
     # Old installations recorded rows but no completion evidence. A small
     # measurement is usable evidence, never proof that calibration is finished.
-    return bool(sample_pool(store)) or not coverage(config, rows, config.max_sequence)
+    return bool(sample_revisions(store)) or not coverage(
+        config, rows, config.max_sequence
+    )
 
 
 def measure_pool(config, store, tokenizer):

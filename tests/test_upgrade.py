@@ -524,7 +524,52 @@ def test_slow_service_counts_as_busy_not_restarted(monkeypatch):
 
     monkeypatch.setattr(upgrade.httpx, "Client", Slow)
     state = upgrade.service_state(SimpleNamespace(port=7613), "id")
-    assert state["requests_in_flight"]
+    # Busy, release unknown; not an agent request it cannot know about.
+    assert state["busy"] and not state.get("requests_in_flight")
+
+
+def test_a_slow_service_on_this_release_is_not_said_to_wait_for_an_agent(
+    tmp_path, monkeypatch, capsys
+):
+    # #71: the service ran this release with no request in flight, but its
+    # status check timed out while measuring; every command said "Update to
+    # … waits for the agent request in progress".
+    root, config, service, calls, run = installed(
+        tmp_path, Launchd, ".plist", version=__version__
+    )
+    monkeypatch.setattr(upgrade.time, "sleep", lambda s: None)
+
+    class Slow:
+        def __init__(self, *a, **k):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def get(self, url):
+            raise httpx.ReadTimeout("measuring")
+
+    monkeypatch.setattr(upgrade.httpx, "Client", Slow)
+    upgrade.catch_up(root, config, service=service, run=run, busy_timeout=0)
+    assert not calls  # never restarted
+    assert capsys.readouterr().out == ""
+
+
+def test_a_slow_service_is_never_restarted_for_a_needed_update(
+    tmp_path, monkeypatch, capsys
+):
+    root, config, service, calls, run = installed(tmp_path, Launchd, ".plist")
+    monkeypatch.setattr(upgrade.time, "sleep", lambda s: None)
+    slow = {"service_running": True, "service_version": None, "busy": True}
+    upgrade.catch_up(
+        root, config, service=service, run=run, read_state=lambda: slow, busy_timeout=0
+    )
+    assert not calls
+    out = capsys.readouterr().out
+    assert "less busy" in out and "agent request" not in out
 
 
 def test_data_dir_without_its_own_service_is_skipped_quietly(tmp_path, monkeypatch):

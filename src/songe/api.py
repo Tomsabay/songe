@@ -1048,6 +1048,22 @@ class LocalClient:
         except (httpx.ConnectError, httpx.ConnectTimeout):
             return snapshot(self.config, ReadOnlyStore(self.root))
 
+    def running(self):
+        """Whether this installation's service answers: the cheap health
+        check, not the whole state (#71: `songe open` waited on a full
+        snapshot before the page even opened, which then loads it again)."""
+        try:
+            with httpx.Client(
+                trust_env=False, timeout=httpx.Timeout(10, connect=1)
+            ) as client:
+                response = client.get(self.url + "/api/state?service=1")
+                response.raise_for_status()
+                data = response.json()
+        except (httpx.ConnectError, httpx.ConnectTimeout):
+            return False
+        self.verify(data)
+        return data.get("service_running") is True
+
     def verify(self, data):
         identity = ReadOnlyStore(self.root).get("installation_id")
         if not identity or data.get("installation_id") != identity:

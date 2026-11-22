@@ -71,3 +71,45 @@ def machine(platform, config=None, max_age=60.0):
         }
     _CACHE.update(at=now, value=value)
     return value
+
+
+def model_billions(ref):
+    """A local model's parameters in billions, from file headers only (no
+    weights loaded); None when they cannot be read. Mixture-of-experts models
+    count every expert (LFM2.5-8B-A1B is 8B): training loads them all."""
+    from pathlib import Path
+
+    path = Path(ref.path)
+    try:
+        if path.is_file() and ref.format == "gguf":
+            from .models.gguf import read_gguf
+
+            return read_gguf(path).parameters / GB or None
+        if path.is_dir():
+            from .artifacts.storage import tensor_sizes
+
+            # bf16 bytes of the unpacked weights: two per parameter. A folder
+            # it cannot unpack counts its file bytes, which only overstates.
+            return tensor_sizes(path, 1)[0] / 2 / GB or None
+    except Exception:  # noqa: BLE001 - an unreadable model is just unknown
+        return None
+    return None
+
+
+def too_big_to_train(platform, ref, config=None):
+    """(model billions, machine limit in billions) when ref is larger than
+    this machine can train by the rule of thumb above, else None (it fits,
+    or its size or the machine's limit is unknown).
+
+    The limit comes from total memory, not memory free right now: free
+    memory moves by gigabytes as apps and the model server load and unload,
+    so a choice made once at init on a momentary reading would be arbitrary.
+    What is free at the time is the live memory guard's job, every time
+    Songe measures or trains."""
+    limit = machine(platform, config, max_age=0)["trains_up_to_b"]
+    if limit is None:
+        return None
+    billions = model_billions(ref)
+    if billions is None or billions <= limit:
+        return None
+    return billions, limit

@@ -197,6 +197,20 @@ def strip_example(example):
     return example
 
 
+
+# A step's hindsight is truthy (as Python's `if step.get("hindsight")`),
+# judged by SQLite without decoding the payload.
+HINDSIGHT = (
+    "CASE json_type(s.payload,'$.hindsight')"
+    " WHEN 'array' THEN json_array_length(s.payload,'$.hindsight') > 0"
+    " WHEN 'object' THEN json_extract(s.payload,'$.hindsight') != '{}'"
+    " WHEN 'text' THEN length(json_extract(s.payload,'$.hindsight')) > 0"
+    " WHEN 'true' THEN 1"
+    " WHEN 'integer' THEN json_extract(s.payload,'$.hindsight') != 0"
+    " WHEN 'real' THEN json_extract(s.payload,'$.hindsight') != 0"
+    " ELSE 0 END"
+)
+
 class Store:
     model_id = ""
     model_key = None
@@ -951,24 +965,48 @@ class Store:
         no step payload (a whole agent history each) becomes Python objects
         (live: 1,495 steps of 128k-token sessions decoded on every dashboard
         refresh starved the API)."""
-        truthy = (
-            "CASE json_type(s.payload,'$.hindsight')"
-            " WHEN 'array' THEN json_array_length(s.payload,'$.hindsight') > 0"
-            " WHEN 'object' THEN json_extract(s.payload,'$.hindsight') != '{}'"
-            " WHEN 'text' THEN length(json_extract(s.payload,'$.hindsight')) > 0"
-            " WHEN 'true' THEN 1"
-            " WHEN 'integer' THEN json_extract(s.payload,'$.hindsight') != 0"
-            " WHEN 'real' THEN json_extract(s.payload,'$.hindsight') != 0"
-            " ELSE 0 END"
-        )
         with self.connect() as db:
             eligible, params = self._learning_filter(db)
             rows = db.execute(
                 "SELECT json_extract(s.payload,'$.conversation') FROM steps s"
-                " WHERE s.retired_at IS NULL AND " + eligible + " AND " + truthy,
+                " WHERE s.retired_at IS NULL AND " + eligible + " AND " + HINDSIGHT,
                 params,
             )
             return [row[0] for row in rows]
+
+    def sample_revisions(self):
+        """{step id: revision} of calibration_state.sample_pool (active steps
+        with feedback, and the pool's newer revisions), read by SQLite: no
+        step payload becomes Python objects. Measuring writes progress every
+        few seconds, so cached answers rarely last; decoding every step for
+        each status check starved the service (#71: `songe status` timed out
+        and the dashboard took 25 s to connect while measuring)."""
+        revision = (
+            "MAX(COALESCE(json_extract({0},'$.source_id'),0),"
+            " COALESCE(json_extract({0},'$.observed_id'),0))"
+        )
+        with self.connect() as db:
+            eligible, params = self._learning_filter(db)
+            found = dict(
+                db.execute(
+                    "SELECT json_extract(s.payload,'$.id'), "
+                    + revision.format("s.payload")
+                    + " FROM steps s WHERE s.retired_at IS NULL AND "
+                    + eligible
+                    + " AND "
+                    + HINDSIGHT,
+                    params,
+                ).fetchall()
+            )
+            for step_id, value in db.execute(
+                "SELECT json_extract(p.step,'$.id'), "
+                + revision.format("p.step")
+                + " FROM pool p LEFT JOIN steps s ON s.id=p.step_id"
+                " WHERE s.retired_at IS NULL AND p.model_id=? AND " + eligible,
+                (self.model_id, *params),
+            ):
+                found[step_id] = max(value, found.get(step_id, value))
+            return found
 
     def active_steps(self, split=None):
         with self.connect() as db:

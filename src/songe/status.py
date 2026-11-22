@@ -314,6 +314,10 @@ def activity(config, store, scheduler, training, models, *, live, ready=None):
         else "service stopped · songe serve"
     )
     p = getattr(scheduler, "last_probe", None)
+    # The scheduler sets this only when it has decided to start; a wait it
+    # set earlier (an idle gap, quiet time) whose time has since run out is
+    # not a start: it decides again on its next check (#71).
+    starting = live and reason == "Will sleep when idle"
     if reason in {
         "Waiting for experience",
         "Waiting for enabled models and learnable experience",
@@ -564,4 +568,13 @@ def activity(config, store, scheduler, training, models, *, live, ready=None):
         ),
         "idle_elapsed_seconds": int(elapsed) if elapsed is not None else None,
         "idle_threshold_seconds": threshold,
+        # What the next start does for this model: measure this machine first
+        # (as "Getting ready" says while it runs), or train (#71: "Ready to
+        # train" alternated with measuring at 1024 of 8192 tokens).
+        "next_step": "measure"
+        if target and (target.get("support") == "pending" or growing)
+        else "train"
+        if target
+        else None,
+        "starting": starting,
     }
