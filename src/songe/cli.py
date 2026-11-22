@@ -396,6 +396,22 @@ def initialize(args, root):
         config.lms, preferred, config.models_dir or folder
     )
 
+    # A first init picks the model auto-dream starts with, so it skips one
+    # this machine cannot realistically train (capacity: model size against
+    # total memory; issue #73: an 8B on a Mac with little to spare).
+    sizing = can_train and not config.model
+    sizes = {}
+
+    def oversized(ref):
+        """(billions, limit) when ref is too big to train here, else None."""
+        if not sizing:
+            return None
+        if ref.path not in sizes:
+            from .capacity import too_big_to_train
+
+            sizes[ref.path] = too_big_to_train(platform, ref, config)
+        return sizes[ref.path]
+
     def preference(ref):
         identifiers = (
             ref.serving_id,
@@ -405,6 +421,8 @@ def initialize(args, root):
         # A model last run through an earlier Songe keeps its "songe/" name.
         normalized = re.sub(r"[^a-z0-9]", "", preferred.removeprefix("songe/").lower())
         return (
+            # A model this machine can train beats one too big for it.
+            len(refs) > 1 and oversized(ref) is not None,
             not (named and ref.path.resolve() == named.resolve()),
             not any(
                 normalized and normalized in re.sub(r"[^a-z0-9]", "", value.lower())
@@ -426,6 +444,15 @@ def initialize(args, root):
             (r for r in reversed(refs) if r.path.resolve() == ref.path.resolve()),
             ref,
         )
+    # Said in the plan: the model passed over for its size, or (none fits)
+    # that auto-dream stays off.
+    learner, skipped = ref.serving_id, None
+    if oversized(ref):
+        learner, skipped = None, (ref.serving_id, *oversized(ref))
+    else:
+        wanted = min(refs, key=lambda r: preference(r)[1:])
+        if wanted.path != ref.path and oversized(wanted):
+            skipped = (wanted.serving_id, *oversized(wanted))
     catalog_refs = list(
         {
             (r.upstream, r.path.resolve()): r
@@ -545,6 +572,10 @@ def initialize(args, root):
     rows += [("Data", str(root)), ("Service", service_fact(args))]
     if not can_train:
         rows.append(("Learning", "records only · no GPU for training"))
+    elif skipped:
+        from .wording import init_learning_line
+
+        rows.append(("Learning", init_learning_line(learner, skipped)))
     else:
         rows.append(("Learning", "new conversations · starts when idle"))
     if config.server_owned:
@@ -632,6 +663,13 @@ def initialize(args, root):
     for found in catalog_refs:
         if found.upstream == config.upstream:
             registry.register(config, existing, found.serving_id, found)
+    for found in catalog_refs:
+        if found.upstream == config.upstream and oversized(found):
+            # Too big to train here: using it later does not switch learning
+            # on by itself (registry.observe); songe models NAME on still does.
+            registry.mark_chosen(existing, found.serving_id)
+    if oversized(ref):
+        registry.set_auto_dream(existing, ref.serving_id, False)
     agents.migrate(config, root, update_agents=False)
     # Recording starts now; the scheduler measures this machine in the first
     # idle gap, under the same memory, battery and traffic rules as training.

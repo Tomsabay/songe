@@ -619,6 +619,24 @@ def auto_dream_message(config, on):
     )
 
 
+def init_learning_line(learner=None, skipped=None):
+    """Init's Learning row when model size decided it. learner: the model
+    auto-dream starts with (None: no model fits); skipped: (name, billions,
+    limit) for the model that would have been chosen but is too big."""
+    name, billions, limit = skipped
+    why = f"{name} is about {max(1, round(billions))}B, " + (
+        f"this computer trains up to about {limit}B"
+        if limit >= 1
+        else "this computer has too little memory to train"
+    )
+    if learner is None:
+        return (
+            f"auto-dream off · {why} · served and recorded; to try anyway:"
+            f" songe models {name} on"
+        )
+    return f"auto-dream with {learner} · starts when idle · skipped {why}"
+
+
 def dream_message(*, blocked=None, reading=0, unread="", wait=None):
     """One line answering a press of Dream: what started, and what training
     still waits on."""
