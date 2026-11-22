@@ -330,9 +330,43 @@ def phase_requirements(config, store, platform, *, calibration=False):
     return requirements
 
 
+# Free space kept for swap on the disk it grows on (#68). macOS adds 1 GB
+# swap files to the startup disk as memory runs short, and nothing bounds
+# them but free space: one measuring run on a crowded 24 GB Mac took that
+# disk from 9 GB free to 3 GB. Measuring probes memory limits on purpose, and
+# training can page too, so neither starts with less than SWAP_START_BYTES
+# free (room for several swap files above the stop line), and a run is
+# stopped, its progress saved, below SWAP_STOP_BYTES: enough left for the
+# save, swap already being written and the system itself, before macOS
+# reaches its own "disk almost full" trouble.
+SWAP_START_BYTES = 8e9
+SWAP_STOP_BYTES = 4e9
+
+
+def swap_space(platform, *, running=False):
+    """Why work must not start (or, running, must stop) for lack of free
+    space where swap grows; None when there is room or swap cannot grow."""
+    found = getattr(platform, "swap_volume", None)
+    found = found() if callable(found) else None
+    if not found:
+        return None
+    path, name = found
+    try:
+        free = shutil.disk_usage(existing_parent(path)).free
+    except OSError:
+        return None  # Unreadable: the memory guard still watches paging.
+    required = SWAP_STOP_BYTES if running else SWAP_START_BYTES
+    if free >= required:
+        return None
+    # The same words as DiskSpace, so every surface reads it as a disk wait.
+    return f"Needs {required / 1e9:.1f} GB free on {name}; {free / 1e9:.1f} GB available"
+
+
 def admit_storage(config, store, platform, *, calibration=False):
     try:
         preflight(phase_requirements(config, store, platform, calibration=calibration))
+        if wait := swap_space(platform):
+            raise StorageWait(wait)
     except StorageWait as exc:
         store.set("disk_wait", str(exc))
         raise

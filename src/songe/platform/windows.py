@@ -60,6 +60,11 @@ class Windows:
             Path(self.environ.get("LOCALAPPDATA", self.home / "AppData/Local")) / NAME
         )
 
+    def swap_volume(self):
+        """A system-managed page file grows on the system drive as memory
+        runs short."""
+        return Path(self.environ.get("SystemDrive", "C:") + "\\"), "the system drive"
+
     def idle_seconds(self):
         class LastInput(ctypes.Structure):
             _fields_ = [("size", ctypes.c_uint32), ("tick", ctypes.c_uint32)]

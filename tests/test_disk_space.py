@@ -617,3 +617,93 @@ def test_disk_admission_leaves_a_reserve(tmp_path, monkeypatch):
     usage.total = 2000 * GB  # the reserve never exceeds 2 GB
     disk.preflight([(tmp_path, 7.9 * GB)])
     disk.preflight([(tmp_path, 0)])  # nothing needed, nothing reserved
+
+
+async def test_measuring_keeps_room_for_swap_on_the_startup_disk(volumes, monkeypatch):
+    """Live #68: while measuring, macOS swap took the startup disk from 9 GB
+    free to 3 GB. Work does not start without room for swap to grow, and a
+    run is stopped, saying why, when swap fills the disk."""
+    from songe import schedule
+    from songe.api import snapshot
+    from songe.wording import status_lines
+    from tests.test_schedule import good
+
+    internal, external, free, store, config = volumes
+    config.save(store.root)
+    registry.migrate(config, store)
+    hardware = SimpleNamespace(
+        name="test",
+        memory=lambda: Memory(24 * GB, 20 * GB),
+        accelerators=lambda: [Accel("cuda", "fake", 8 * GB, 8 * GB)],
+        keep_awake=lambda pid: None,
+        swap_volume=lambda: (internal / "vm", "the startup disk"),
+    )
+
+    async def park(on_snapshot):
+        on_snapshot([])
+
+    scheduler = schedule.ModelScheduler(config, store, SimpleNamespace(park=park), hardware)
+    scheduler.last_traffic -= 2000
+    monkeypatch.setattr(schedule, "probe", lambda *a: good())
+    monkeypatch.setattr(schedule, "guard", lambda *a, **kw: None)
+    monkeypatch.setattr(storage, "phase_requirements", lambda *a, **kw: [(external, GB)])
+    launched, signals = [], []
+
+    async def exited():
+        return child.returncode
+
+    child = SimpleNamespace(pid=12345, returncode=None, wait=exited)
+
+    async def spawn(*args, **kwargs):
+        launched.append(args)
+        return child
+
+    monkeypatch.setattr(schedule.asyncio, "create_subprocess_exec", spawn)
+    monkeypatch.setattr(schedule, "interrupt_group", signals.append)
+    # Too little room for swap: measuring does not start, and says why.
+    free[internal] = 5 * GB
+    await scheduler.tick()
+    assert not launched
+    assert scheduler.reason == "Needs 8.0 GB free on the startup disk; 5.0 GB available"
+    data = snapshot(config, store, scheduler, live=True)
+    assert dict(status_lines(data))["now"] == (
+        "Waiting for disk space · 8.0 GB needed on the startup disk · 5.0 GB free"
+        " · retries automatically"
+    )
+    # Room again: it starts.
+    free[internal] = 9 * GB
+    await scheduler.tick()
+    assert len(launched) == 1 and "songe.sleep.calibrate" in launched[0]
+    await scheduler.guard_task
+    # Swap grows while it measures: still room, it carries on.
+    free[internal] = 5 * GB
+    await scheduler.tick()
+    assert not signals
+    # Below the stop line: stopped, progress saved, and the reason kept.
+    free[internal] = 3 * GB
+    await scheduler.tick()
+    assert signals == [child] and scheduler.interrupted_by == "the disk is almost full"
+    child.returncode = -2
+    await scheduler.tick()
+    assert scheduler.process is None
+    reason = registry.entries(store)[0]["reason"]
+    assert reason == "Needs 4.0 GB free on the startup disk; 3.0 GB available"
+    # It tries again once there is room to start.
+    free[internal] = 9 * GB
+    model = registry.entries(store)[0]["id"]
+    store.scoped(model).set("last_attempt", 0)  # past the pause between runs
+    await scheduler.tick()
+    assert len(launched) == 2 and store.scoped(model).get("disk_wait") is None
+
+
+def test_swap_grows_on_the_startup_disk_only_where_it_can_grow():
+    from songe.platform.darwin import Darwin
+    from songe.platform.linux import Linux
+    from songe.platform.windows import Windows
+
+    assert Darwin().swap_volume() == (Path("/private/var/vm"), "the startup disk")
+    assert Linux().swap_volume() is None  # fixed-size swap cannot fill a disk
+    drive = Windows(environ={"SystemDrive": "D:"}, kernel=object(), user=object())
+    assert drive.swap_volume() == (Path("D:\\"), "the system drive")
+    # A platform without a swap disk never blocks work.
+    assert storage.swap_space(SimpleNamespace()) is None

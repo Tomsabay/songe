@@ -70,6 +70,11 @@ class Darwin:
     def data_dir(self):
         return self.home / f"Library/Application Support/{NAME}"
 
+    def swap_volume(self):
+        """Where macOS adds swap files as memory runs short: the startup
+        disk's container (its VM volume shares the free space)."""
+        return Path("/private/var/vm"), "the startup disk"
+
     def idle_seconds(self):
         try:
             idle = re.search(

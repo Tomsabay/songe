@@ -39,7 +39,7 @@ def test_disk_wait_names_the_volume_and_the_numbers():
     now = "waiting · Needs 49.5 GB free on /Volumes/disk; 31.3 GB available"
     assert status_copy({"activity": {"now": now}}) == (
         "Waiting for disk space",
-        "49.5 GB needed on /Volumes/disk · 31.3 GB free",
+        "49.5 GB needed on /Volumes/disk · 31.3 GB free · retries automatically",
     )
 
 

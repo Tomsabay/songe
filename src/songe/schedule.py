@@ -831,6 +831,8 @@ class Scheduler:
         self.last_probe = p
         if self.process:
             if self.process.returncode is None:
+                from .artifacts.storage import swap_space
+
                 if p.power.constrained():
                     self.reason = "Stopping: battery low; saving checkpoint"
                     self.interrupt("battery low")
@@ -841,6 +843,13 @@ class Scheduler:
                 elif not p.available:
                     # Probes failing is a fault, not a wait (songe doctor).
                     self.interrupt("hardware probe failed")
+                elif self.cancelled_at is None and (
+                    low := await asyncio.to_thread(swap_space, self.platform, running=True)
+                ):
+                    # Swap was filling the disk (#68): stop, saving progress;
+                    # the disk wait shows until there is room to start again.
+                    self.store.set("disk_wait", low)
+                    self.interrupt("the disk is almost full")
                 if (
                     self.cancelled_at
                     and time.monotonic() - self.cancelled_at

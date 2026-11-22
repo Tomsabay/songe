@@ -54,6 +54,11 @@ class Linux:
             Path(self.environ.get("XDG_DATA_HOME", self.home / ".local/share")) / NAME
         )
 
+    def swap_volume(self):
+        # Swap partitions and swap files have a fixed size here: paging
+        # cannot fill a disk, so there is nothing to keep free for it.
+        return None
+
     def idle_seconds(self):
         # No portable input-idle API for headless/Wayland sessions.
         return None

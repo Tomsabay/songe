@@ -134,6 +134,7 @@ def status_copy(data):
     ):
         return "Waiting for disk space", (
             f"{disk[1]} GB needed on {disk[2]} · {disk[3]} GB free"
+            " · retries automatically"
         )
     if unsupported := re.match(r"unsupported · (.+)", reason):
         return "Not supported yet", f"{unsupported[1]} · Choose another model"
