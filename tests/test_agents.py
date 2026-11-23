@@ -1,6 +1,6 @@
 import json
-from pathlib import Path
 import plistlib
+from pathlib import Path
 
 from songe import agents, launchd
 from songe.agents.opencode import configure
