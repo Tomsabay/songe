@@ -267,8 +267,44 @@ def bookkeeping(store, mode="dreams"):
     return store.get("experience_watermark", 0), store.get("practice_revisions", {})
 
 
-# {scene id: revision} of the scenes a rejected Deep Dream trained.
+# {scene id: [revision, times]}: the scenes Deep Dreams trained without being
+# adopted, and how many such Dreams trained each. After RETRIES of them a
+# scene counts as practised: it is no longer trained in full by every later
+# Dream and comes back as replay only.
 REJECTED = "rejected_practice"
+RETRIES = 3
+
+
+def rejected(store):
+    """{scene id: (revision, times)} of REJECTED."""
+    return {
+        scene: tuple(value) if isinstance(value, list) else (value, 1)
+        for scene, value in (store.get(REJECTED) or {}).items()
+    }
+
+
+def keep_for_retry(store, revisions):
+    """The bookkeeping of a Deep Dream that was not adopted (rejected by the
+    gate, or its update never loaded). revisions: the cycle record's
+    practice_revisions, what was practised before plus what this Dream
+    trained. Nothing was adopted, so nothing was practised: the scenes it
+    trained stay untrained and are trained again, in full, with the next new
+    scenes (counted as practised they only ever came back as replay, a few at
+    a time). A scene on its RETRIES-th such Dream is counted as practised."""
+    practised = dict(store.get("practice_revisions", {}))
+    waiting = rejected(store)
+    for scene, revision in revisions.items():
+        if practised.get(scene) == revision:
+            continue
+        before = waiting.get(scene, (None, 0))
+        times = (before[1] if before[0] == revision else 0) + 1
+        if times >= RETRIES:
+            waiting.pop(scene, None)
+            practised[scene] = revision
+        else:
+            waiting[scene] = (revision, times)
+    store.set(REJECTED, {scene: list(value) for scene, value in waiting.items()})
+    store.set("practice_revisions", practised)
 
 
 def untrained(store, steps=None):
@@ -292,8 +328,8 @@ def marked(store, steps):
     """These scenes, the ones a rejected Deep Dream trained marked "retry"."""
     from ..steps import revision_id
 
-    rejected = store.get(REJECTED) or {}
-    return [s | {"retry": True} if rejected.get(s["id"]) == revision_id(s) else s for s in steps]
+    waiting = rejected(store)
+    return [s | {"retry": True} if waiting.get(s["id"], (None,))[0] == revision_id(s) else s for s in steps]
 
 
 def pending(config, store):

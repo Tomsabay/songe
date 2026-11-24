@@ -846,6 +846,17 @@ that scene's teacher note ("Note from an earlier, different task (it may not
 apply here)", the feedback and the lesson). Real contexts are never trained on;
 replay draws from earlier practice scenes. Anchors and the gate are unchanged.
 
+A scene counts as practised once a Deep Dream that trained it is adopted
+(`practice_revisions`). A Dream that is not adopted, rejected by the gate or
+never loaded by the model server, practised nothing: its scenes are kept under
+`rejected_practice` and trained again, in full, by the next Dream that has a
+new scene, after the scenes no Dream has tried when the Dream is capped. On
+their own they wait, since the same scenes alone would be rejected again. A
+scene trained by three Dreams that were not adopted counts as practised from
+then on and comes back as replay only. Forgetting, a change of a model's
+learning level and a switch of learning mode clear `rejected_practice` together
+with `practice_revisions`.
+
 References: [Thinking Machines, On-Policy Distillation (2025)](https://thinkingmachines.ai/blog/on-policy-distillation/);
 [OPSD (2601.18734)](https://arxiv.org/abs/2601.18734);
 [SDFT (2601.19897)](https://arxiv.org/abs/2601.19897);

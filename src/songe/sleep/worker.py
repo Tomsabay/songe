@@ -322,6 +322,7 @@ def run(
             # dreams: what was trained under one says nothing about the other.
             store.set("experience_watermark", 0)
             store.set("practice_revisions", {})
+            store.set("rejected_practice", {})
             store.set("learning_mode", config.learning)
         if info["reason"] == "Waiting for experience":
             return info
@@ -1452,22 +1453,11 @@ def run(
             store.set("last_completed", time.time())
             if config.learning == "dreams":
                 # Nothing was adopted, so nothing was practised: this Dream's
-                # scenes stay untrained and are trained again, in full, with
-                # the next new scenes (counted as practised they only ever
-                # came back as replay, a few at a time). On their own they
-                # wait (practice.pool.untrained).
-                from ..practice.pool import REJECTED
+                # scenes are trained again with the next new ones. On their
+                # own they wait (practice.pool.untrained).
+                from ..practice.pool import keep_for_retry
 
-                practised = store.get("practice_revisions", {})
-                store.set(
-                    REJECTED,
-                    (store.get(REJECTED) or {})
-                    | {
-                        scene: revision
-                        for scene, revision in record["practice_revisions"].items()
-                        if practised.get(scene) != revision
-                    },
-                )
+                keep_for_retry(store, record["practice_revisions"])
             else:
                 store.set("experience_watermark", record["watermark"])
                 store.set("practice_revisions", record["practice_revisions"])
