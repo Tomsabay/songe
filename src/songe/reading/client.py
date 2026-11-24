@@ -168,6 +168,42 @@ class Reader:
         return answer
 
 
+    async def reply(self, messages, *, max_tokens, temperature=0):
+        """The served model's own next message in a conversation, asked the
+        way its users ask: no schema and none of the reasoning switches the
+        reader's questions set. Not cached.
+        {"content", "finished", "reasoned"}."""
+        if self.still_idle is not None and not self.still_idle():
+            raise Stopped()
+        body = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "stream": False,
+        }
+        started = time.monotonic()
+        response = await self.client.post(self.url + "/chat/completions", json=body)
+        response.raise_for_status()
+        choice = (response.json().get("choices") or [{}])[0]
+        message = choice.get("message") or {}
+        self.calls += 1
+        self.seconds += time.monotonic() - started
+        self.tokens_out += usage(response)
+        content = message.get("content")
+        content = content if isinstance(content, str) else ""
+        return {
+            "content": content,
+            "finished": choice.get("finish_reason") == "stop",
+            # Reasoning in its own field (servers name it either way) or
+            # left in the text.
+            "reasoned": "<think>" in content
+            or any(
+                isinstance(message.get(k), str) and message[k].strip()
+                for k in ("reasoning_content", "reasoning")
+            ),
+        }
+
     async def post(self, body, prompt, schema, name):
         """One question: (answer, finish reason, generated tokens, reasoning
         text). Structured output when the

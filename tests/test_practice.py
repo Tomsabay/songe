@@ -240,3 +240,131 @@ def test_a_chat_without_tools_or_system_message_gives_a_plain_scene():
     # A logged system prompt is still the frame's.
     framed = frame_from_request({"messages": [{"role": "system", "content": "Be brief."}] + request["messages"]}, "x")
     assert build(scene, framed)[0][0] == {"role": "system", "content": "Be brief."}
+
+
+# ---- A plain chat: new messages of the same kind, kept when the note changes the answer ----
+
+CHAT_SIGNAL = {
+    "id": "c0ffee00aa", "type": "correction", "source": "user", "session": "s-chat", "from": None,
+    "generality": "always", "text": "I use uv, not pip.", "lesson": "Use uv to install packages, not pip.",
+    "exchanges": {"1": 1},
+}
+CHAT_REQUEST = {"messages": [{"role": "user", "content": "How do I install requests?"}]}
+CHAT_ITEMS = [{"kind": "user", "content": "How do I install requests?"}]
+NEW_MESSAGES = ["What do I run to get numpy into this project?", "Add pandas for me, which command?",
+                "I need httpx here. How?"]
+
+
+class ChatWriter(FakeReader):
+    """Writes `messages`; answers a scene with `plain`, or with `taught` when
+    the scene's note is shown; judges for the answer given in `follows`
+    ("taught", "plain", or a fixed letter)."""
+
+    def __init__(self, messages=NEW_MESSAGES, plain="pip install it", taught="uv add it", follows="taught",
+                 reasoned=False):
+        super().__init__()
+        self.messages, self.plain, self.taught = messages, plain, taught
+        self.follows, self.reasoned = follows, reasoned
+        self.prompts, self.replied = [], []
+
+    async def ask(self, prompt, schema, name, *, temperature=0, max_tokens=None):
+        self.asked.append(name)
+        self.prompts.append(prompt)
+        if name == "dream":
+            return {"messages": list(self.messages)}
+        assert name == "changes"
+        if self.follows in ("A", "B", "both", "neither"):
+            return {"follows": self.follows}
+        wanted = self.taught if self.follows == "taught" else self.plain
+        first = prompt.split("Answer A:\n", 1)[1].split("\n\nAnswer B:", 1)[0]
+        return {"follows": "A" if first == wanted else "B"}
+
+    async def reply(self, messages, *, max_tokens, temperature=0):
+        self.replied.append(messages)
+        noted = "Not part of the conversation" in messages[-1]["content"]
+        return {"content": self.taught if noted else self.plain, "finished": True, "reasoned": self.reasoned}
+
+
+def chat_written(store, monkeypatch, writer, variants=(1, 2, 3), request=CHAT_REQUEST):
+    monkeypatch.setattr(practice, "wanted", lambda store, per_signal: [(CHAT_SIGNAL, list(variants))])
+    monkeypatch.setattr(practice, "source", lambda store, signal: (request, CHAT_ITEMS))
+    asyncio.run(practice.write(store, writer, len(variants)))
+    return practice.practice(store)
+
+
+def test_a_plain_chat_practises_new_messages_of_the_same_kind(store, monkeypatch):
+    """A chat with no tools: each scene is a new conversation that opens with
+    a message of the kind the user sent before their feedback. The writer
+    sees that message and never the lesson, so no scene can state it; one
+    answer holds every scene. Live, the three-message scenes had the user
+    say the lesson again ("... but remember to use pnpm instead of npm")."""
+    writer = ChatWriter()
+    rows = chat_written(store, monkeypatch, writer)
+    assert [r["messages"] for r in rows] == [[{"role": "user", "content": m}] for m in NEW_MESSAGES]
+    assert all(r["tools"] == [] and r["drop"] is None for r in rows)
+    assert writer.asked.count("dream") == 1
+    asked = writer.prompts[0]
+    assert "How do I install requests?" in asked and "3 new messages" in asked
+    assert "uv" not in asked and "pip" not in asked
+    # The forced choice between two lessons is not asked: a scene that does
+    # not state its lesson gave the model nothing to pick it by.
+    assert "matters" not in writer.asked and all(r["checks"]["matters"] is None for r in rows)
+    assert all(r["teacher_note"].endswith("Lesson: Use uv to install packages, not pip.") for r in rows)
+    # A logged system prompt opens each new conversation too.
+    with_system = {"messages": [{"role": "system", "content": "Be brief."}] + CHAT_REQUEST["messages"]}
+    rows = chat_written(store, monkeypatch, ChatWriter(), request=with_system)
+    assert rows[0]["messages"][0] == {"role": "system", "content": "Be brief."}
+    assert rows[0]["messages"][1]["role"] == "user" and len(rows[0]["messages"]) == 2
+
+
+def test_a_plain_scene_is_kept_when_its_note_changes_the_answer(store, monkeypatch):
+    """The served model answers the scene alone and with the note; the
+    scene is kept when the judge, asked in both orders, picks the answer
+    with the note both times. That answer is stored with the scene."""
+    writer = ChatWriter()
+    rows = chat_written(store, monkeypatch, writer)
+    assert all(r["checks"]["changes"] is True for r in rows)
+    assert rows[0]["teacher_answer"] == {"content": "uv add it", "finished": True}
+    # Two answers per scene: the scene alone, then with its note as an aside.
+    alone, noted = writer.replied[:2]
+    assert alone == rows[0]["messages"]
+    assert noted[:-1] == rows[0]["messages"] and "Lesson: Use uv to install" in noted[-1]["content"]
+    # The judge reads the user's own words, each pair in both orders.
+    judged = [p for p, name in zip(writer.prompts, writer.asked, strict=True) if name == "changes"]
+    assert len(judged) == 6 and all("I use uv, not pip." in p for p in judged)
+    assert "Answer A:\npip install it" in judged[0] and "Answer A:\nuv add it" in judged[1]
+
+
+def test_a_plain_scene_the_note_does_not_change_is_dropped(store, monkeypatch):
+    # The same answer with and without the note: nothing to learn here, and
+    # the judge is not asked.
+    same = ChatWriter(taught="pip install it")
+    rows = chat_written(store, monkeypatch, same)
+    assert {r["drop"] for r in rows} == {"changes"} and "changes" not in same.asked
+    assert rows[0]["why"]["changes"] == "same" and "teacher_answer" not in rows[0]
+    # The judge prefers the answer without the note, or the first one shown
+    # whatever it is (a position preference), or neither: dropped.
+    for follows in ("plain", "A", "neither"):
+        store_rows = chat_written(store, monkeypatch, ChatWriter(follows=follows))
+        assert {r["drop"] for r in store_rows} == {"changes"}, follows
+
+
+def test_a_plain_scene_of_a_reasoning_server_is_kept_without_an_answer(store, monkeypatch):
+    """A server that reasons first: the scene is still judged on what the
+    user would see, but its answer is not stored (the scene's own prompt
+    does not lead into that reasoning)."""
+    rows = chat_written(store, monkeypatch, ChatWriter(reasoned=True))
+    assert all(r["drop"] is None and "teacher_answer" not in r for r in rows)
+
+
+def test_fewer_plain_messages_than_asked_leave_scenes_that_did_not_build(store, monkeypatch):
+    writer = ChatWriter(messages=["Add pandas for me, which command?", " add pandas for me, which command? ", 7])
+    rows = chat_written(store, monkeypatch, writer)
+    assert [r["drop"] for r in rows] == [None, "built", "built"]
+    assert rows[1]["scene"] == {"error": "no message written"}
+
+
+def test_a_plain_message_copied_from_the_chat_is_dropped(store, monkeypatch):
+    writer = ChatWriter(messages=["How do I install requests?"])
+    rows = chat_written(store, monkeypatch, writer, variants=(1,))
+    assert rows[0]["drop"] == "not_copy" and writer.replied == []

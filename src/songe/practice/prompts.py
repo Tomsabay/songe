@@ -121,6 +121,26 @@ def teacher_note(signal):
 NO_TOOLS = """The agent has no tools: it can only answer in text. Leave files and steps empty, and use a moment of kind "user_message": agent_said is the agent's previous answer and user_message the user's next question, where the lesson matters. mistake and right_action are answers, not tool calls."""
 
 
+# A plain chat's practice: new messages of the same kind as the one the user
+# sent before their feedback. The writer sees that message and never the
+# lesson, so a scene cannot state it. (Live, Qwen3.5-4B, three-message scenes:
+# of 92 kept ones the model followed the lesson on 38 with no note, mostly
+# because the scene's user said it again, "... but remember to use pnpm
+# instead of npm". There is nothing to learn from a scene like that.)
+LIKE = """A user sent an assistant this message:
+{asked}
+
+Write {count} new messages the same user might send in other conversations. Each is the same kind of request about something different, worded differently from this one and from each other, and complete on its own.
+
+Answer with JSON only: {{"messages": ["...", "..."]}}"""
+
+LIKE_SCHEMA = {
+    "type": "object",
+    "properties": {"messages": {"type": "array", "items": {"type": "string"}}},
+    "required": ["messages"],
+}
+
+
 def tools_section(request_tools, tools):
     """What the scene writer is told about the agent's tools: the ones a
     scene can use, or, for a client that sends none, that there are none."""
