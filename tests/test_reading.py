@@ -1333,6 +1333,10 @@ def test_the_lesson_question_for_a_tools_output_keeps_what_it_named(store):
     went_on, ended = sorted(reader.questions, key=lambda q: "command not found" in q)
     assert P.TOOL_FACT in went_on and P.TOOL_FACT not in ended
     assert "name exactly what the output named" in P.TOOL_FACT
+    # What worked is advice only when it is the ordinary way: live, a pip that refused to install into the
+    # system Python left "Use '--break-system-packages' when pip refuses to install." as the one note.
+    assert "A way around a refusal or a warning that protects something" in P.TOOL_FACT
+    assert "is never part of the lesson" in P.TOOL_FACT
     assert "the conversation ended with it" not in went_on
     assert "the conversation ended with it" in ended and "names it exactly as written" in ended
     attempt = ended.split("All steps of the attempt, one line each:\n", 1)[1]

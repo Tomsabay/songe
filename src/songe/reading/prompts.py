@@ -355,12 +355,17 @@ Answer with JSON only."""
 # and "No module named pytest" were stored as "Install missing dependencies
 # before running tests." and the next task ran the same failing command
 # (issue #144).
+# What the agent did next is added only when it is the ordinary way to do the
+# thing. Live (the same sessions, read three times): pip's refusal to install
+# into the system Python became "Use '--break-system-packages' when pip
+# refuses to install." each time, once as the only note in the prompt.
 TOOL_FACT = """
 The feedback is a tool's own output. If it shows how the tool or this machine behaves (a command, program, module or option that is missing or refused, a value the tool does not accept, the form it wants), that fact is the lesson, and the rule below about naming the general practice does not apply:
-  - lesson and short say what to do about it and name exactly what the output named (the command, program, module, option, value or message), written out as in the output, together with what the agent did afterwards that worked, if anything did. Never replace them with their category ("the missing dependency", "the right tool", "the required format").
-    Shapes, where <NAME> stands for what the output named and <WORKED> for what worked afterwards:
-    "<NAME>: command not found" -> "<NAME> is not installed here; use <WORKED>."
-    "<NAME> is not accepted" -> "Do not use <NAME>; use <WORKED>."
+  - lesson and short state the fact and name exactly what the output named (the command, program, module, option, value or message), written out as in the output. Never replace it with its category ("the missing dependency", "the right tool", "the required format"). Here short may be a statement instead of an instruction.
+  - Add what to do instead only if the agent then did it, it worked, and it is the ordinary way to do the thing. A way around a refusal or a warning that protects something (forcing, overriding or skipping a check, installing for the whole system, switching the protection off) is never part of the lesson, even when it worked: then the lesson is the fact alone.
+    Shapes, where <NAME> stands for what the output named and <WORKED> for the ordinary thing that worked afterwards:
+    "<NAME>: command not found" -> "<NAME> is not installed here; use <WORKED>." or, with nothing ordinary that worked, "<NAME> is not installed here."
+    "<NAME> is not accepted" -> "<NAME> is not accepted; use <WORKED>."
   - generality is "always" when the fact is about the tool or the machine, because it will be the same on the next task.
   This task's own files, function names and data still do not belong in the lesson."""
 
