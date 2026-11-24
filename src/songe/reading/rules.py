@@ -178,11 +178,22 @@ SENTENCES = re.compile(r"(?<=[.!?])\s+")
 CONDITIONAL = re.compile(r"^(please\s+)?(when|whenever|if)\b[^,.;]{3,80},\s*(please\s+)?(always|never|don't|do not)\b", re.I)
 
 
+def unquoted(text):
+    """A message without the quotes around the whole of it: `opencode run
+    "..."` sends its message wrapped in them."""
+    for left, right in (('"', '"'), ("'", "'"), ("\u201c", "\u201d")):
+        if len(text) > 1 and text.startswith(left) and text.endswith(right):
+            inner = text[1:-1]
+            if left not in inner and right not in inner:
+                return inner.strip()
+    return text
+
+
 def rule_sentence(text):
     """The first sentence of the user's that is a standing rule: it starts like
     one, says it is meant to last (LASTING_START or LASTING), has at least four
     words, and does not point back at the conversation. Or None."""
-    for sentence in SENTENCES.split(" ".join(str(text or "").split())):
+    for sentence in SENTENCES.split(unquoted(" ".join(str(text or "").split()))):
         if DEICTIC.search(sentence) or not 12 <= len(sentence) <= 160:
             continue
         if CONDITIONAL.search(sentence) and len(sentence.split()) >= 5:

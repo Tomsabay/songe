@@ -725,6 +725,20 @@ def test_a_copied_example_is_no_lesson_and_conditional_rules_are_rules():
     assert rule_sentence("Use the feedback from each guess.") is None
 
 
+def test_a_rule_in_a_message_wrapped_in_quotes_keeps_no_quote():
+    """Live (opencode 1.19.6, `opencode run "..."`): the message arrives inside
+    quotes; the first rule was missed and the last became the preference
+    `Always add dependencies with uv add."`."""
+    from songe.reading.rules import rule_sentence
+
+    wrapped = '"Never use pip in this repo. Always add dependencies with uv add."'
+    assert rule_sentence(wrapped) == "Never use pip in this repo."
+    assert rule_sentence('"Always add dependencies with uv add."') == "Always add dependencies with uv add."
+    assert rule_sentence("\u201cAlways run tests with uv run pytest.\u201d") == "Always run tests with uv run pytest."
+    # Quotes that belong to the sentence stay.
+    assert rule_sentence('Always name the branch "main".') == 'Always name the branch "main".'
+
+
 def test_opencode_1_19_titles_compactions_and_continue_are_not_the_user():
     # Recorded from opencode 1.19.6 (#15): its title and summary requests and
     # the message it sends after a compaction were read as the user's own, and
