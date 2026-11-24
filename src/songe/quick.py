@@ -11,9 +11,9 @@ preferences, tool facts) and every lesson from the user's own feedback
 (corrections, retries, approvals), whatever its label: the generality label
 is noisy (27 of 43 on the answer key) and preferences come from the user.
 Skill lessons from tool results wait for Deep Dream, with one exception: a
-skill learned from the results of one of the agent's own tools (a function or
-MCP tool, not a shell or a file tool) is published for that tool, and the
-proxy adds it only to sessions that offer the tool (tool_of). Near-duplicates
+lesson from the results of one of the agent's own tools (a function or MCP
+tool, not a shell or a file tool), skill or fact, is published for that tool,
+and the proxy adds it only to sessions that offer the tool (tool_of). Near-duplicates
 are one lesson; the most recurrent, then the most recent, come first; at most
 config.prompt_lessons, and TOOL_LESSONS per tool. A lesson the user removed
 never returns.
@@ -99,15 +99,17 @@ TOOL_BLOCK = "Lessons from earlier sessions that used the {tool} tool. Follow th
 
 
 def tool_of(signal):
-    """The tool a skill lesson belongs to, or None.
+    """The tool a lesson belongs to, or None.
 
-    A lesson read as fitting one kind of task ("kind") stays out of the
-    prompt, because the prompt goes to every task. When it came from the
-    result of one of the agent's own tools, the tool says where it applies:
-    sessions that offer the same tool are tasks of that kind. Shell commands,
-    fetched pages and file tools serve every kind of task, so a lesson from
-    their results is not tied to them and waits for Deep Dream as before."""
-    if signal.get("source") != "tool" or signal.get("generality") != "kind":
+    A lesson from the result of one of the agent's own tools (a function or
+    MCP tool) belongs to that tool: sessions that offer the tool are where it
+    applies, whether it is a skill ("kind": the prompt goes to every task, so
+    a skill had to stay out of it) or a fact about the tool ("always": it is
+    of no use where the tool is not offered). Shell commands, fetched pages
+    and file tools serve every kind of task, so a lesson from their results
+    is not tied to them: a fact goes to every session and a skill waits for
+    Deep Dream, as before."""
+    if signal.get("source") != "tool" or signal.get("generality") not in ("kind", "always"):
         return None
     tool = signal.get("tool")
     return tool if tool and reviewed(tool) and tool not in COMMAND_OUTPUT else None

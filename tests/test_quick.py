@@ -857,9 +857,10 @@ def test_a_skill_learned_from_a_tools_results_goes_to_sessions_that_offer_the_to
     task, so none reached the prompt and the next game began with nothing
     learned. A skill lesson stays out of the prompt because the prompt goes to
     every task; the tool it came from says where it applies. Lessons from the
-    results of one of the agent's own tools are published for that tool and
-    added only to sessions that offer it. Shell commands serve every kind of
-    task: their skill lessons wait for Deep Dream as before."""
+    results of one of the agent's own tools, skills and facts about the tool,
+    are published for that tool and added only to sessions that offer it.
+    Shell commands serve every kind of task: their skill lessons wait for
+    Deep Dream and their facts go to every session, as before."""
     add_signal(store, "c1", "Always use Conventional Commits for commit messages.", revision=1)
     add_signal(store, "g1", "Never guess a word that was already guessed.", kind="failed_result", tool="guess", revision=2)
     add_signal(store, "g2", "Never guess a word that was guessed already.", kind="failed_result", tool="guess", revision=3)
@@ -878,6 +879,12 @@ def test_a_skill_learned_from_a_tools_results_goes_to_sessions_that_offer_the_to
     # In the prompt of its sessions, so no longer only waiting for a Deep Dream.
     assert {w["text"] for w in quick.waiting(store)["lessons"]} == {
         "In Wordle keep letters marked G in place.", "Run the entry points after a rename."}
+    # A fact about the tool is of no use where the tool is not offered either.
+    add_signal(store, "t1", "The guess tool takes one bare word, without brackets.", kind="failed_result",
+               generality="always", tool="guess", revision=7)
+    quick.quick_dream(store, config, now=150.0)
+    lessons = quick.active(store)
+    assert "bare word" not in quick.block(lessons) and "bare word" in quick.block(lessons, ["guess"])
     # A tool has its own small budget; the lessons for every session keep theirs.
     more = ["Open with slate or crane.", "Move yellow letters elsewhere.", "Drop grey consonants afterwards.",
             "Count vowels found so far.", "Prefer common endings late.", "Avoid plurals entirely.",
