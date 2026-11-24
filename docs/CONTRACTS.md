@@ -806,7 +806,9 @@ observations, then the idle review's "What went wrong" and "Lesson" when the rep
 was reviewed, then "Respond now with your own action." A practice scene's
 hindsight is one note Songe wrote (the lesson and the feedback it came from), so
 its teacher gets that note as an aside instead: not part of the conversation,
-shown only to it, to follow where it applies and not to mention. General anchors
+shown only to it, to follow where it applies and not to mention. The aside asks
+for "the reply to the message above" when the scene has no tools and, when it
+has, for "your own action" as a real step's block does. General anchors
 carry no hindsight and keep the original base as teacher. Forward KL over the full
 vocabulary, each vocabulary entry's contribution clipped at `vocab_clip`
 (provisional 1.0 until measured), is evaluated on the student's freshly sampled

@@ -89,7 +89,7 @@ def review_note(step):
     return ("\n".join(parts) + "\n") if parts else ""
 
 
-def practice_aside(note):
+def practice_aside(note, tools=False):
     """The teacher's extra message on a practice scene.
 
     A scene's hindsight is one note Songe wrote (the lesson and the feedback
@@ -97,14 +97,21 @@ def practice_aside(note):
     observations, the teacher often answered the note instead of the scene
     ("I acknowledge the lesson: ...") and followed it less often (Qwen3.5-4B,
     134 scenes: 34 answers spoke of the note and 61 of 92 followed their
-    lesson; as this aside, 6 and 79)."""
+    lesson; as this aside, 6 and 79).
+
+    Those scenes were plain chats, and "write the reply" is asked only where
+    the conversation has no tools. An agent's scene often ends on a tool
+    result and its next step is a tool call, so with tools the aside closes
+    with the line a real step's teacher has always had."""
+    ask = "Respond now with your own action." if tools else "Now write the reply to the message above."
     return {
         "role": "user",
         "content": "(Not part of the conversation. A note from an earlier session"
         " with this user, shown only to you:\n"
         + note
-        + "\nNow write the reply to the message above. Follow the note where it"
-        " applies and do not mention it.)",
+        + "\n"
+        + ask
+        + " Follow the note where it applies and do not mention it.)",
     }
 
 
@@ -157,7 +164,7 @@ def paired_prompts(
         + "Respond now with your own action.",
     }
     if h and step.get("practice"):
-        note = practice_aside(str(budgeted(tokenizer, h, config)[-1].get("content") or ""))
+        note = practice_aside(str(budgeted(tokenizer, h, config)[-1].get("content") or ""), tools=bool(tools))
 
     def pair():
         student = render(tokenizer, messages, tools)
