@@ -49,12 +49,12 @@ def clusters(signals, have=None):
     signal practised for a cluster is the one that already has the most
     scenes (so a newer look-alike does not start over), else the newest."""
     from ..quick import normal, similar
-    from ..reading.rules import rule_sentence
+    from ..reading.rules import stated_sentence
 
     have = have or {}
     groups = []
     for s in sorted(signals, key=lambda s: s.get("revision") or 0, reverse=True):
-        rule = rule_sentence(s.get("text")) if s.get("from") == "rules" and s.get("source") == "user" else None
+        rule = stated_sentence(s) if s.get("from") == "rules" and s.get("source") == "user" else None
         text = rule or s["lesson"].strip()
         if rule:
             home = next((g for g in groups if g["rule"] and normal(g["text"]) == normal(rule)), None)

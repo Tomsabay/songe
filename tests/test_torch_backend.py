@@ -1,3 +1,4 @@
+import contextlib
 import math
 from types import SimpleNamespace
 
@@ -602,3 +603,103 @@ def test_teacher_snapshot_lives_in_host_ram_and_round_trips(backend):
             torch.testing.assert_close(p.detach().cpu(), before[n].cpu())
     for n, p in params.items():
         torch.testing.assert_close(p.detach(), moved[n])
+
+
+def test_gate_reads_the_reference_once_for_all_versions(backend, step):
+    """kl_from with views: the reference's read of a moment is kept and
+    reused across versions; the KL is the same as reading it every time."""
+    prompt, teacher = paired_prompts(backend.tokenizer, step, backend.config)
+    y = [1, 2, 3, 4]
+    backend.snapshot_teacher()
+    plain = backend.kl_from(backend, prompt, teacher, y, hindsight=True)
+    reads = []
+    original = backend.teacher_hidden
+
+    def counted(*args, **kw):
+        if not isinstance(args[2] if len(args) > 2 else None, contextlib.nullcontext):
+            reads.append(1)  # the reference's read (the candidate's passes a null context)
+        return original(*args, **kw)
+
+    backend.teacher_hidden = counted
+    views = {}
+    first = backend.kl_from(backend, prompt, teacher, y, hindsight=True, views=views)
+    again = backend.kl_from(backend, prompt, teacher, y, hindsight=True, views=views)
+    drift = backend.kl_from(backend, prompt, prompt, y, views=views)  # another view
+    assert len(reads) == 2 and len(views) == 2
+    assert first == pytest.approx(plain, abs=1e-6) and again == first
+    assert all(v.device.type == "cpu" for v in views.values())  # host RAM
+    assert drift >= 0
+
+
+def test_gate_reads_in_bigger_chunks_and_halves_them_out_of_memory(backend, step):
+    """read_chunk changes how a context is read, not what is measured; out
+    of memory halves it (never below teacher_chunk), then gives up."""
+    prompt, teacher = paired_prompts(backend.tokenizer, step, backend.config)
+    prompt = prompt * 6  # longer than the small chunk below
+    y = [1, 2, 3, 4]
+    backend.config.teacher_chunk = 8
+    small = backend.kl_from(backend, prompt, teacher, y)
+    backend.read_chunk = 64
+    assert backend.kl_from(backend, prompt, teacher, y) == pytest.approx(small, abs=1e-4)
+    sizes, original = [], backend._frozen_hidden
+
+    def short_of_memory(prompt, y):
+        sizes.append(backend._chunk())
+        if backend._chunk() > 16:
+            raise torch.OutOfMemoryError("test")
+        return original(prompt, y)
+
+    backend._frozen_hidden = short_of_memory
+    backend.teacher_hidden(prompt, y)
+    assert sizes == [64, 32, 16] and backend.read_chunk == 16
+    backend.read_chunk, sizes[:] = None, []
+    backend.config.teacher_chunk = 32
+    with pytest.raises(torch.OutOfMemoryError):  # at teacher_chunk: no smaller retry
+        backend.teacher_hidden(prompt, y)
+    assert sizes == [32]
+
+
+def test_one_prompt_read_serves_the_score_and_the_answer(backend, step):
+    """prompt_state: the score continues from a copy, the answer from the
+    state itself; both match reading the prompt again, and an unchanged
+    model drifts exactly zero (reference and candidate read alike)."""
+    prompt, teacher = paired_prompts(backend.tokenizer, step, backend.config)
+    prompt = prompt * 6
+    y = [1, 2, 3, 4]
+    backend.config.teacher_chunk = 8
+    plain_kl = backend.kl_from(backend, prompt, teacher, y, hindsight=True)
+    plain_answer, _, _ = backend.sample(prompt, seed=7613)
+    state = backend.prompt_state(prompt)
+    assert state is not None and backend.prompt_state(prompt[:8]) is None
+    shared_kl = backend.kl_from(backend, prompt, teacher, y, hindsight=True, state=state)
+    shared_answer, _, _ = backend.sample(prompt, seed=7613, state=state)
+    assert shared_kl == pytest.approx(plain_kl, abs=1e-5)
+    assert shared_answer == plain_answer
+    with backend.base():
+        assert backend.kl_from(backend, prompt, prompt, y) == 0.0
+
+
+def test_the_bases_reads_are_kept_across_dreams(backend, step, tmp_path):
+    """KeptViews: the frozen base's read of a moment is saved and read back
+    by the next Dream (same KL, no read); the cycle teacher's is not saved."""
+    from songe.sleep.evaluate import KeptViews
+
+    prompt, teacher = paired_prompts(backend.tokenizer, step, backend.config)
+    y = [1, 2, 3, 4]
+    backend.snapshot_teacher()
+    first = KeptViews(tmp_path, ["base-a"])
+    drift = backend.kl_from(backend, prompt, prompt, y, views=first)
+    backend.kl_from(backend, prompt, teacher, y, hindsight=True, views=first)
+    reads, original = [], backend.teacher_hidden
+
+    def counted(*args, **kw):
+        if not isinstance(args[2] if len(args) > 2 else None, contextlib.nullcontext):
+            reads.append(1)
+        return original(*args, **kw)
+
+    backend.teacher_hidden = counted
+    later = KeptViews(tmp_path, ["base-a"])
+    assert backend.kl_from(backend, prompt, prompt, y, views=later) == pytest.approx(drift)
+    assert reads == []
+    backend.kl_from(backend, prompt, teacher, y, hindsight=True, views=later)
+    assert reads == [1]  # the teacher's read is not kept on disk

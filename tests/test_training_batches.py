@@ -565,6 +565,7 @@ def test_measure_shows_a_sharper_version_that_a_small_kl_hides(kind):
         candidate.head = lambda hidden: hidden
         if kind == "torch":
             candidate.torch = torch
+            candidate.config = SimpleNamespace(teacher_chunk=512)  # a short prompt: one pass
             candidate._response_hidden = lambda prompt, y: tensor(logits)
         else:
             candidate.mx = API
