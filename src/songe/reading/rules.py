@@ -26,7 +26,9 @@ import re
 FAILURE = re.compile(
     r"\b[1-9]\d* failed\b|\bFAILED\b|^error(\[E\d+\])?:|Traceback \(most recent call last\)"
     r"|\bgame over\b|Out of guesses|\bnot ok \d+|\bpanicked at\b|\bAssertionError\b"
-    r"|\"error\":\s*\"",
+    r"|\"error\":\s*\""
+    # The shell's own errors: a missing command or Python module.
+    r"|: command not found$|^\S*python[\d.]*: No module named\b",
     re.M,
 )
 PASSED = re.compile(
@@ -42,6 +44,8 @@ CHECK = re.compile(
 )
 EXIT = re.compile(r"Exit code: (\d+)\s*$")
 EDITS = {"edit", "write", "patch", "multiedit", "apply_patch"}
+# Tools that run a command (opencode's and Pi's is bash).
+COMMANDS = {"shell", "execute", "bash"}
 GAME_MOVES = {"wordle.py", "guess.py"}
 
 
@@ -69,7 +73,7 @@ def classify(tool, body, call=None):
         return "tool_error", error.get("message", "")[:300]
     if tool == "execute" and body.startswith(("SyntaxError:", "Invalid arguments for tool")):
         return "tool_error", body.splitlines()[0][:300]
-    if tool not in ("shell", "execute"):
+    if tool not in COMMANDS:
         return None
     code = EXIT.search(body.strip())
     failure = FAILURE.search(body)

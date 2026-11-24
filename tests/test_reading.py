@@ -857,3 +857,25 @@ async def test_a_dream_carried_on_after_a_restart_reads_with_auto_dream_off(conf
     await scheduler.tick()
     # It read the conversation itself first, then went on (nothing unread).
     assert asked and launched == [0]
+
+
+def test_a_failed_bash_command_is_a_failed_result():
+    """#132: opencode's and Pi's tool is bash, and its output has no exit code.
+    A missing command or module must count as a failure without a review."""
+    from songe.reading.rules import classify
+
+    def run(command):
+        return {"arguments": json.dumps({"command": command})}
+
+    failures = [
+        ("pytest", "/bin/bash: line 1: pytest: command not found\n"),
+        ("python -m pytest", "/usr/local/bin/python: No module named pytest\n"),
+        ("pip install pytest", "error: externally-managed-environment\n\n× This environment is externally managed\n"),
+        ("python scripts/run.py", "Traceback (most recent call last):\n  ...\nModuleNotFoundError: No module named 'kitchen'\n"),
+    ]
+    for command, body in failures:
+        assert classify("bash", body, run(command))[0] == "failed_result", body
+    assert classify("bash", "12 passed in 0.4s\n", run("uv run pytest -q")) == ("success", "12 passed")
+    assert classify("bash", "README.md\nsrc\n", run("ls")) is None
+    # Mentioning the phrase is not hitting it.
+    assert classify("bash", "No module named in this repo is missing\n", run("cat notes.md")) is None
