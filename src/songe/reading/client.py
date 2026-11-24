@@ -183,10 +183,11 @@ class Reader:
         return answer
 
 
-    async def reply(self, messages, *, max_tokens, temperature=0):
+    async def reply(self, messages, *, max_tokens, temperature=0, think=None):
         """The served model's own next message in a conversation, asked the
         way its users ask: no schema and none of the reasoning switches the
-        reader's questions set. Not cached.
+        reader's questions set. think=False sets those switches, for a server
+        whose reasoning left no room for the reply. Not cached.
         {"content", "finished", "reasoned"}."""
         if self.still_idle is not None and not self.still_idle():
             raise Stopped()
@@ -197,6 +198,10 @@ class Reader:
             "max_tokens": max_tokens,
             "stream": False,
         }
+        if think is False:
+            body["reasoning_effort"] = "none"
+            if self.template_switch:
+                body["chat_template_kwargs"] = {"enable_thinking": False}
         started = time.monotonic()
         response = await self.client.post(self.url + "/chat/completions", json=body)
         response.raise_for_status()
