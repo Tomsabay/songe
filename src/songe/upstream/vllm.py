@@ -34,6 +34,20 @@ class VLLM:
     def discover(self):
         return discovery.vllm(self.url, self.transport)
 
+    async def served_contexts(self):
+        """Context the user's vLLM serves each model with (its --max-model-len),
+        from /v1/models "max_model_len"."""
+        url = (getattr(self.config, "server_source_url", "") or self.url).rstrip("/")
+        if not url.endswith("/v1"):
+            url += "/v1"
+        async with httpx.AsyncClient(
+            transport=self.transport, timeout=self.timeout, trust_env=False
+        ) as client:
+            response = await client.get(url + "/models")
+            response.raise_for_status()
+            models = response.json().get("data", [])
+        return {m["id"]: int(m["max_model_len"]) for m in models if m.get("max_model_len")}
+
     async def _request(self, method, path, **kwargs):
         async with httpx.AsyncClient(
             transport=self.transport, timeout=self.timeout, trust_env=False

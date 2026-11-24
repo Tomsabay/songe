@@ -340,6 +340,35 @@ async def test_llamacpp_reports_the_context_the_users_server_runs_with():
     assert await upstream.served_contexts() == {"/models/qwen.gguf": 16384}
 
 
+async def test_vllm_reports_the_context_the_users_server_runs_with():
+    # Without it agents got the 8192 fallback: opencode, whose own prompt is
+    # larger, compacted on every turn against a vLLM started with
+    # --max-model-len 32768 and never answered.
+    def handler(request):
+        if request.url.host != "user":
+            raise httpx.ConnectError("owned server is down", request=request)
+        assert request.url.path == "/v1/models"
+        return httpx.Response(
+            200,
+            json={
+                "data": [
+                    {"id": "/models/Qwen3.5-4B", "max_model_len": 32768},
+                    {"id": "no-limit-reported"},
+                ]
+            },
+        )
+
+    upstream = VLLM(
+        SimpleNamespace(
+            upstream="vllm",
+            upstream_url="http://owned/v1",
+            server_source_url="http://user/v1",
+        ),
+        transport=httpx.MockTransport(handler),
+    )
+    assert await upstream.served_contexts() == {"/models/Qwen3.5-4B": 32768}
+
+
 async def test_llamacpp_unregistered_adapter_and_missing_supervisor_fail_closed(
     tmp_path,
 ):
