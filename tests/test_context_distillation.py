@@ -355,3 +355,48 @@ def test_the_users_own_rules_make_a_capped_dream_first(config):
     pool = [experience() | {"id": f"practice:{i}", "source_id": i, "stated": i in (8, 9)} for i in range(1, 10)]
     chosen, _ = bounded_batch(pool, config, seconds=None, step_seconds=0, whole=True)
     assert {s["id"] for s in chosen} >= {"practice:8", "practice:9"}
+
+
+def test_prompts_are_rendered_the_way_the_users_server_sends_them(store):
+    """Live (vLLM serving Qwen3.5-4B with thinking off): the template's
+    default starts every answer inside <think>, so a Deep Dream trained on
+    128 tokens of reasoning that this server never produces, and its check
+    compared two pieces of reasoning."""
+    from songe.sleep import prompts
+
+    class Template:
+        def apply_chat_template(self, messages, **kwargs):
+            self.switches = {k: v for k, v in kwargs.items() if k == "enable_thinking"}
+            return [1, 2, 3]
+
+    def record(message):
+        store.record(
+            "/v1/chat/completions",
+            {"model": "m", "messages": [{"role": "user", "content": "hi"}]},
+            {"choices": [{"message": {"role": "assistant"} | message}]},
+        )
+
+    def switches(**own):
+        prompts.serve_as(prompts.served_switches(store))
+        prompts.render(tokenizer, [{"role": "user", "content": "x"}], None, **own)
+        return tokenizer.switches
+
+    tokenizer = Template()
+    try:
+        # Nothing recorded yet: the template's default.
+        assert switches() == {}
+        # The server answers directly, in text or with a tool call.
+        record({"content": "4"})
+        call = {"id": "c", "type": "function", "function": {"name": "read", "arguments": "{}"}}
+        record({"content": "", "tool_calls": [call]})
+        assert switches() == {"enable_thinking": False}
+        # A caller's own switch still wins.
+        assert switches(enable_thinking=True) == {"enable_thinking": True}
+        # The server reasons first (either field name, or <think> text).
+        record({"content": "4", "reasoning": "two and two"})
+        assert switches() == {}
+    finally:
+        prompts.serve_as({})
+    assert prompts.reasoned({"reasoning_content": "plan"})
+    assert prompts.reasoned({"content": "<think>plan</think>4"})
+    assert not prompts.reasoned({"content": "4", "reasoning": " "})

@@ -185,10 +185,19 @@ def run(
     from .evaluate import evaluate, references, sharpness
     from .fuse import candidate_kind, evaluation_model, export_candidate
     from .gate import Decision, choose_scale, decide
-    from .prompts import OversizedStep, UnusableStep, paired_prompts
+    from .prompts import (
+        OversizedStep,
+        UnusableStep,
+        paired_prompts,
+        serve_as,
+        served_switches,
+    )
     from .samples import SampleAdmission
     from .select import bounded_batch, replay_pool, select
 
+    # Every prompt of this cycle (training, the check, the examples) is
+    # rendered the way the user's server sends it.
+    serve_as(served_switches(store))
     policy_config = config
     lease = (store.root / "worker.lock").open("a+", encoding="utf-8")
     acquire(lease)
