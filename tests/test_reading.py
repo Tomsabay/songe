@@ -1286,6 +1286,25 @@ def test_the_results_of_an_agents_own_tools_are_reviewed(store):
     assert "{" not in asked.replace("JSON", "")
 
 
+class LessonQuestions(FakeReader):
+    """Keeps the lesson questions it is asked."""
+
+    def __init__(self):
+        super().__init__()
+        self.questions = []
+
+    async def ask(self, prompt, schema, name):
+        if name == "lesson":
+            self.questions.append(prompt)
+        return await super().ask(prompt, schema, name)
+
+
+def tool_step(cid, name, result, **args):
+    """An agent's call and the tool's answer to it."""
+    return ({"role": "assistant", "content": "", "tool_calls": [call(cid, name, **args)]},
+            {"role": "tool", "tool_call_id": cid, "content": result})
+
+
 def test_the_lesson_question_for_a_tools_output_keeps_what_it_named(store):
     """Live (Qwen3.5-4B and 9B on vLLM, 30 coding tasks, issue #144): "pytest:
     command not found" was stored as "Install missing dependencies before
@@ -1295,15 +1314,7 @@ def test_the_lesson_question_for_a_tools_output_keeps_what_it_named(store):
     lost game) is asked about as a whole attempt, with all its steps."""
     from songe.reading import prompts as P
 
-    class Recording(FakeReader):
-        def __init__(self):
-            super().__init__()
-            self.questions = []
-
-        async def ask(self, prompt, schema, name):
-            if name == "lesson":
-                self.questions.append(prompt)
-            return await super().ask(prompt, schema, name)
+    Recording, step = LessonQuestions, tool_step
 
     def record(first, steps, last):
         history = [SYSTEM, {"role": "user", "content": first}]
@@ -1312,10 +1323,6 @@ def test_the_lesson_question_for_a_tools_output_keeps_what_it_named(store):
             history = history + [action, result]
         store.record("/v1/chat/completions", {"messages": history, "tools": TOOLS},
                      reply({"role": "assistant", "content": last}))
-
-    def step(cid, name, result, **args):
-        return ({"role": "assistant", "content": "", "tool_calls": [call(cid, name, **args)]},
-                {"role": "tool", "tool_call_id": cid, "content": result})
 
     edit = dict(filePath="x.py", oldString="a", newString="b")
     # Fails, is fixed, passes: the failure is one step of a task that went on.
@@ -1337,6 +1344,10 @@ def test_the_lesson_question_for_a_tools_output_keeps_what_it_named(store):
     # system Python left "Use '--break-system-packages' when pip refuses to install." as the one note.
     assert "A way around a refusal or a warning that protects something" in P.TOOL_FACT
     assert "is never part of the lesson" in P.TOOL_FACT
+    # How far a fact reaches is judged as for any lesson. Live, a line that made a fact about the tool or the
+    # machine "always" sent 13 to 16 of 16 to 19 lessons to every session (8 of 18 without it), among them a
+    # module missing in one project.
+    assert "generality" not in P.TOOL_FACT
     assert "the conversation ended with it" not in went_on
     assert "the conversation ended with it" in ended and "names it exactly as written" in ended
     attempt = ended.split("All steps of the attempt, one line each:\n", 1)[1]

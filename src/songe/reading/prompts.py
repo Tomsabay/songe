@@ -348,7 +348,6 @@ Can both be true of the user now?
 - "later_only": no. The later sentence means the earlier one is no longer true: they changed their mind, stopped doing it, gave it up, or now want the opposite.
 Answer with JSON only."""
 
-
 # Added to the lesson question when the feedback is a tool's own output. What
 # the output named is the lesson, as with the user's words. Live (Qwen3.5-4B
 # and 9B, 30 coding tasks with failing commands): "pytest: command not found"
@@ -359,6 +358,11 @@ Answer with JSON only."""
 # thing. Live (the same sessions, read three times): pip's refusal to install
 # into the system Python became "Use '--break-system-packages' when pip
 # refuses to install." each time, once as the only note in the prompt.
+# How far the fact reaches is judged by the lesson question's own rule. Live,
+# with a line here that made a fact about the tool or the machine "always": 13
+# to 16 of 16 to 19 lessons were read as "always" (8 of 18 without it), among
+# them "Install missing dependencies like tomli_w before running tests.",
+# which is true of one project.
 TOOL_FACT = """
 The feedback is a tool's own output. If it shows how the tool or this machine behaves (a command, program, module or option that is missing or refused, a value the tool does not accept, the form it wants), that fact is the lesson, and the rule below about naming the general practice does not apply:
   - lesson and short state the fact and name exactly what the output named (the command, program, module, option, value or message), written out as in the output. Never replace it with its category ("the missing dependency", "the right tool", "the required format"). Here short may be a statement instead of an instruction.
@@ -366,7 +370,6 @@ The feedback is a tool's own output. If it shows how the tool or this machine be
     Shapes, where <NAME> stands for what the output named and <WORKED> for the ordinary thing that worked afterwards:
     "<NAME>: command not found" -> "<NAME> is not installed here; use <WORKED>." or, with nothing ordinary that worked, "<NAME> is not installed here."
     "<NAME> is not accepted" -> "<NAME> is not accepted; use <WORKED>."
-  - generality is "always" when the fact is about the tool or the machine, because it will be the same on the next task.
   This task's own files, function names and data still do not belong in the lesson."""
 
 # Asked instead when the failed result is the last thing in the conversation:
