@@ -293,7 +293,7 @@ def preference_sentences(text, limit=3):
             pieces = [sentence]
         for piece in pieces:
             piece = piece.strip()
-            if not (4 if chinese else 12) <= len(piece) <= 200:
+            if not (3 if chinese else 12) <= len(piece) <= 200:
                 continue
             if piece[0] in "\"'\u201c\u2018\u300c\u300e":
                 continue  # inside a quotation that goes on: somebody's line, not the user speaking

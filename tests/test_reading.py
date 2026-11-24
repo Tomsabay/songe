@@ -993,6 +993,7 @@ def test_not_every_sentence_in_the_first_person_is_a_preference(config, store):
     assert preference_sentences("As a vegan, I skip honey too.") == ["As a vegan, I skip honey too."]
     assert preference_sentences("我不吃辣。") == ["我不吃辣"]
     assert preference_sentences("我对花生过敏，推荐点别的") == ["我对花生过敏"]
+    assert preference_sentences("我吃素，不吃肉也不吃鱼。") == ["我吃素"]
     assert preference_sentences("I avoid three things: gluten, dairy and soy.") == ["I avoid three things: gluten, dairy and soy."]
     # Never candidates: a pick among things just offered, a wish about this
     # answer, a fact of the task, a question, a text handed over to be worked
