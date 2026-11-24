@@ -257,6 +257,21 @@ TASTE_ZH = re.compile(
     r"|害怕|恐高|习惯|習慣|从不|從不|从来不|總是|总是|一向|反感|倾向|傾向|只吃|只喝|只用|只看|只买|只坐|只住|只穿"
 )
 # A pick among things just offered, or a remark on what was just shown.
+# How people say a habit of theirs has changed: "I've stopped taking the
+# train; I cycle to work now", "These days I only read e-books", "我现在只喝茶".
+# There may be no word of taste in it, and the sentence need not open with
+# "I". A candidate like the others: the model judges it.
+CHANGE = re.compile(
+    r"\b(?:no longer|any ?more|these days|nowadays|from now on"
+    r"|i(?:['\u2019]ve| have)? (?:switched|stopped|quit|given up|gave up|moved (?:on |over )?to|gone off|become|became|changed my mind|had enough of)"
+    r"|i(?:['\u2019]d| would) rather)\b"
+    r"|\bnow[.!]?$", re.I
+)
+CHANGE_ZH = re.compile(
+    r"不再|戒了|戒掉|改用|改吃|改喝|改坐|现在只|現在只|现在都|現在都|现在不|現在不|以后都|以後都|以后不|以後不|以后只|以後只"
+    r"|从现在起|從現在起|已经不|已經不"
+)
+SPEAKER = re.compile(r"(?<![.\w])i(?:['\u2019](?:m|ve|d|ll))?\b(?!\.)", re.I)
 CHOICE = re.compile(
     r"\b(?:first|second|third|fourth|last|former|latter|previous|other)"
     r" (?:one|two|option|version|choice|suggestion|answer|draft|design|approach|example|idea)\b"
@@ -299,7 +314,13 @@ def preference_sentences(text, limit=3):
                 continue  # inside a quotation that goes on: somebody's line, not the user speaking
             if piece.endswith(("?", "\uff1f", "吗", "呢")) or DEICTIC.search(piece) or CHOICE.search(piece):
                 continue
-            if (SELF.search(piece) and TASTE.search(piece)) or (chinese and "我" in piece and TASTE_ZH.search(piece)):
+            if chinese:
+                found = "我" in piece and (TASTE_ZH.search(piece) or CHANGE_ZH.search(piece))
+            else:
+                found = (SELF.search(piece) and TASTE.search(piece)) or (
+                    (SELF.search(piece) or SPEAKER.search(piece)) and CHANGE.search(piece)
+                )
+            if found:
                 out.append(piece)
     return out[:limit]
 

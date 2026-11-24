@@ -111,7 +111,9 @@ or by auto-dream:
   is kept the same way: their sentence, word for word, in the prompt at once.
   It counts wherever it stands, the opening message included. Rules find the
   candidates (`rules.preference_sentences`: first person, a word of taste,
-  habit or need, not a question, not a pick among things just offered); the
+  habit or need, or the words of a change of habit ("no longer", "these
+  days", "I've stopped ...", "不再"), not a question, not a pick among things
+  just offered); the
   served model is asked one question per candidate (`preference`) and only
   "about_me" is kept, not a reaction to the last answer, a line about the job,
   or a line of a text handed over to be worked on. It points at the step it is

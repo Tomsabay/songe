@@ -1090,6 +1090,46 @@ def test_not_every_sentence_in_the_first_person_is_a_preference(config, store):
     assert quick.active(store) == []
 
 
+def test_a_sentence_that_says_a_habit_changed_is_a_candidate(config, store):
+    """Live (Qwen3.5-4B on vLLM; 20 people each state a preference and, in a
+    later conversation, say it has changed): 10 of the 20 later statements
+    were never looked at, so the note kept the old habit only. The patterns
+    that pick candidate sentences wanted a word of taste ("prefer", "avoid",
+    "only") in a sentence that opens with "I", and "I've stopped taking the
+    train; I cycle to work now." has no such word. The words people use for a
+    change now make a candidate too; the model still judges each one. All 20
+    became notes, and 15 of 20 more cases written afterwards (2 before); in
+    5,000 real chat turns 6 more sentences are candidates, and none is kept."""
+    from songe import quick
+    from songe.reading.rules import preference_sentences
+
+    for text in (
+        "I've stopped taking the train; I cycle to work now.",
+        "I no longer drink coffee.",
+        "These days I cook without butter.",
+        "Actually I'd rather get there by bike.",
+        "I've become a morning person.",
+        "Meetings before ten don't work for me anymore; I start at eleven now.",
+        "我戒了咖啡。", "我不再坐飞机了。", "我改用左手鼠标了。",
+    ):
+        assert preference_sentences(text) == [text.rstrip("。")], text
+    # Nobody speaking of themself, a request, a question: still not candidates.
+    for text in (
+        "The build doesn't work anymore.", "Make it no longer depend on my config.", "It works now.",
+        "Is it any faster now?", "现在只剩两个测试失败。",
+    ):
+        assert preference_sentences(text) == [], text
+    # A candidate only: the model is asked, and a line about the job is not kept.
+    said = "I've stopped taking the train; I cycle to work now."
+    record_chat(store, (f"{said} Plan my morning.", "Leave at 8."))
+    record_chat(store, ("I no longer get the error. What next?", "Run the tests."))
+    reader = Judge(about_me={said})
+    assert read(store, reader) == 2 and len(reader.questions) == 2
+    assert [s["preference"] for s in reading.signals(store) if s.get("preference")] == [said]
+    quick.quick_dream(store, config)
+    assert [lesson["text"] for lesson in quick.active(store)] == [said]
+
+
 def test_the_results_of_an_agents_own_tools_are_reviewed(store):
     """Live (Qwen3.5-9B on vLLM, a word game played through a function tool
     named guess, 100 games): reading asked no review question and kept no
