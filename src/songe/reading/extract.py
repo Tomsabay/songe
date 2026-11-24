@@ -257,7 +257,7 @@ class Session:
                 # The user's own words can hold a wish to keep as they said it.
                 wish=P.USER_WISH if source == "user" else "",
             ),
-            P.LESSON_SCHEMA,
+            P.USER_LESSON_SCHEMA if source == "user" else P.LESSON_SCHEMA,
             "lesson",
         )
         signal.update(
@@ -267,6 +267,11 @@ class Session:
             # The prompt's example pasted back, not a lesson about this
             # moment: no lesson (the signal and its instance stay).
             signal.update(lesson=None, short=None, copied_example=True)
+        work = " ".join(str(lesson.get("work") or "").split()).strip(" .:")
+        if source == "user" and signal["generality"] == "kind" and signal["short"] and 0 < len(work) <= 40:
+            # A wish that holds for a kind of work: its note says which, and
+            # the model that reads the note judges whether it applies.
+            signal.update(work=work, short=f"For {work}: {signal['short']}")
         if "error" in lesson:
             signal["error"] = lesson["error"]
         self.signals.append(signal)

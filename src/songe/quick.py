@@ -7,10 +7,10 @@ trains lessons into the weights; once a Deep Dream that trained a lesson is
 adopted, the lesson leaves the prompt (absorb).
 
 Which lessons: those read as applying to any task ("always": standing
-preferences, tool facts) and every lesson from the user's own feedback
-(corrections, retries, approvals), whatever its label: the generality label
-is noisy (27 of 43 on the answer key) and preferences come from the user.
-Skill lessons from tool results wait for Deep Dream. Near-duplicates are one
+preferences, tool facts), the user's own rules and stated preferences, and a
+lesson from the user's correction that holds for a kind of work ("kind"; its
+text says which). A correction limited to one task, and skill lessons from
+tool results, wait for Deep Dream. Near-duplicates are one
 lesson; the most recurrent, then the most recent, come first; at most
 config.prompt_lessons. A lesson the user removed never returns.
 
@@ -37,6 +37,7 @@ KEY = "prompt_lessons"
 USER = {"correction", "retry", "approval"}
 LESSON_CHARS = 300
 SIMILAR = 0.5  # word overlap (Jaccard) at which two lessons are one
+SCOPE = re.compile(r"^For [^:]{1,40}: ")  # the kind of work a note is for, as reading writes it
 WORDS = re.compile(r"[\u3400-\u9fff\uf900-\ufaff\u3040-\u30ff]|[^\W_]+")
 COMMON = {
     "the", "a", "an", "to", "of", "and", "or", "in", "on", "for", "with", "is",
@@ -78,7 +79,9 @@ def normal(text):
 
 
 def similar(a, b):
-    x, y = words(a), words(b)
+    # The kind of work two notes name ("For web pages: ...") does not make
+    # them alike.
+    x, y = words(SCOPE.sub("", a)), words(SCOPE.sub("", b))
     return bool(x and y) and len(x & y) / len(x | y) >= SIMILAR
 
 
@@ -92,9 +95,10 @@ def active(store):
 
 def suitable(signal):
     """A lesson for the prompt: one read as applying to any task ("always":
-    tool facts, standing preferences), or a rule the user stated in their own
-    words (a sentence of theirs shaped like a rule). Other feedback (a
-    reaction in a game, a one-off correction) waits for Deep Dream."""
+    tool facts, standing preferences), a rule or a preference the user stated
+    in their own words, or a correction of theirs that holds for a kind of
+    work. Other feedback (a one-off correction, a retry, a tool's result)
+    waits for Deep Dream."""
     lesson = (signal.get("lesson") or "").strip()
     if not lesson:
         return False
@@ -109,6 +113,11 @@ def suitable(signal):
         # rule check, so a looser past capture does not stay in the prompt.
         return rule_sentence(signal.get("text")) is not None
     if signal.get("generality") == "always":
+        return True
+    if signal.get("type") == "correction" and signal.get("generality") == "kind" and signal.get("work"):
+        # What the user asked for in their own words, holding for a kind of
+        # work: the note names that kind ("For web pages: ..."), and the
+        # model reading the prompt judges whether it applies.
         return True
     return signal.get("type") in USER and rule_sentence(signal.get("text")) is not None
 
@@ -397,9 +406,14 @@ def quick_dream(store, config, now=None, merged=None, kept=None):
         else:
             unique[key] = dict(lesson)
     pool = list(unique.values())
-    # The user's own rules first, then the most recurrent, before the cut;
+    # The user's own rules first, then lessons for any task, then those for
+    # one kind of work; within each the most recurrent, before the cut;
     # published ones win a tie.
-    pool.sort(key=lambda lesson: (not lesson.get("rule"), -lesson["count"]))
+    def narrow(lesson):
+        known = [by_id[sid] for sid in lesson["signals"] if sid in by_id]
+        return bool(known) and all(s.get("generality") == "kind" for s in known)
+
+    pool.sort(key=lambda lesson: (not lesson.get("rule"), narrow(lesson), -lesson["count"]))
     lessons, used, taken = [], 0, set()
     for c in pool[: config.prompt_lessons]:
         text = c["text"]

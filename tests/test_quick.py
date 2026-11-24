@@ -12,11 +12,11 @@ def one_session_is_enough(config):
     config.quick_min_sessions = 1
 
 
-def add_signal(store, sid, lesson, *, kind="correction", generality="kind", revision=1, text=None):
+def add_signal(store, sid, lesson, *, kind="correction", generality="kind", revision=1, text=None, **more):
     # The user's words: by default the lesson itself, as a stated rule.
     text = lesson if text is None and kind in quick.USER else text or ""
     payload = {"id": sid, "session": "s", "type": kind, "source": "user" if kind in quick.USER else "tool",
-               "lesson": lesson, "generality": generality, "revision": revision, "text": text}
+               "lesson": lesson, "generality": generality, "revision": revision, "text": text, **more}
     with store.connect() as db:
         db.execute("INSERT INTO signals VALUES (?,?,?,?,?,NULL)",
                    (sid, store.model_id, "s", revision, json.dumps(payload)))
@@ -848,4 +848,24 @@ def test_ten_sentences_in_the_users_own_words_fit_the_list(config, store):
     assert 600 < sum(len(habit) + 8 for habit in habits) <= quick.PROMPT_CHARS
     quick.quick_dream(store, config)
     assert len(quick.active(store)) == 10
+
+
+def test_a_lesson_for_one_kind_of_work_takes_a_place_only_when_one_is_free(config, store):
+    """A correction that holds for a kind of work is in the prompt with that
+    kind named, but never in the place of a lesson for any task."""
+    things = ["serif headings", "a dark background", "square corners", "one accent colour", "hairline borders", "flat fills",
+              "wide margins", "small caps", "a sticky header", "pill buttons", "a footer note"]
+    for n, thing in enumerate(things):
+        add_signal(store, f"k{n}", f"For web pages: Use {thing}.", text=f"can it have {thing}?", work="web pages", revision=n + 1)
+    quick.quick_dream(store, config)
+    assert len(quick.active(store)) == config.prompt_lessons == 10
+    assert all(lesson["text"].startswith("For web pages: ") for lesson in quick.active(store))
+    # A lesson for any task arrives when the ten places are taken.
+    add_signal(store, "a1", "Answer in metric units.", text="metres please, not feet", generality="always", revision=20)
+    quick.quick_dream(store, config)
+    texts = [lesson["text"] for lesson in quick.active(store)]
+    assert texts[0] == "Answer in metric units." and len(texts) == 10
+    # Naming the same kind of work does not make two notes one.
+    assert not quick.similar("For web pages: Use Nunito.", "For web pages: Use coral.")
+    assert quick.similar("For web pages: Use Nunito.", "For web pages: Use the Nunito font.")
 

@@ -77,6 +77,14 @@ LESSON_SCHEMA = {
     "required": ["lesson", "short", "instance", "generality", "verifiable"],
 }
 
+# The lesson question about the user's own words also asks which kind of work
+# a "kind" lesson holds for, so that its note can say it ("For web pages: ...").
+USER_LESSON_SCHEMA = {
+    "type": "object",
+    "properties": {**LESSON_SCHEMA["properties"], "work": {"type": "string"}},
+    "required": [*LESSON_SCHEMA["required"], "work"],
+}
+
 CLASSIFY = """You are reviewing a conversation between a user and a coding agent.
 
 Earlier user messages (oldest first):
@@ -208,7 +216,8 @@ The feedback is the user's own words. If it tells the agent how this user wants 
     "<THING>, not <OTHER>." -> "Use <THING>, not <OTHER>."
     "<THING> please." -> "Use <THING>." or "Write <THING>."
     "You forgot <THING>." -> "Always include <THING>."
-  - generality is "always" for such a wish, unless the user limited it to this one task."""
+  - generality is "always" for a wish that holds whatever the work, "kind" for one that only makes sense for a kind of work (web pages, Python code, emails), and "task" only when the user limited it to this one task.
+- work: when generality is "kind", that kind of work in one to three words, plural or uncountable ("web pages", "Python code", "emails"); otherwise ""."""
 
 # Asked about a sentence the rules flagged as a possible preference of the
 # user's own (rules.preference_sentences). Only "about_me" is kept. The other

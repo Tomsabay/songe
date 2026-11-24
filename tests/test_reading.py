@@ -1087,3 +1087,45 @@ def test_the_results_of_an_agents_own_tools_are_reviewed(store):
     assert "These are the commands the agent ran in one turn, with their output:\ns\n" in asked
     assert 'compile checks like "syntax OK", or any error message (those are handled elsewhere).\n' in asked
     assert "{" not in asked.replace("JSON", "")
+
+
+def test_a_wish_in_the_users_own_words_reaches_the_prompt(config, store):
+    """Live (Inkling 2 Mini on vLLM, three people giving six lines of feedback
+    each on small web pages): "the corners are too sharp, round them way more,
+    like 20px, pill buttons" left the lesson "When building a UI, use rounded
+    corners (about 20px) and pill-shaped buttons, not sharp corners.", read as
+    fitting a kind of task, and so were 15 of 30 lessons: none of them reached
+    the prompt, and which ones did changed from run to run."""
+    from songe import quick
+    from songe.reading import prompts as P
+
+    # About the user's own words the lesson question also asks which kind of
+    # work a "kind" lesson holds for.
+    assert "work" in P.USER_LESSON_SCHEMA["required"] and "work" not in P.LESSON_SCHEMA["required"]
+    assert '"kind" for one that only makes sense for a kind of work' in P.USER_WISH
+
+    class Wish(FakeReader):
+        async def ask(self, prompt, schema, name):
+            if name != "lesson":
+                return await super().ask(prompt, schema, name)
+            self.asked.append(name)
+            assert schema is P.USER_LESSON_SCHEMA
+            return {"lesson": "Use large rounded corners.", "short": "Use large rounded corners.", "instance": "sharp corners",
+                    "generality": "kind", "verifiable": None, "work": "web pages"}
+
+    record_chat(store, ("Build a pricing card.", "<div class=card>...</div>"),
+                ("the corners are too sharp, round them way more", "<div class=card style='border-radius:20px'>...</div>"))
+    read(store, Wish())
+    wish = next(s for s in reading.signals(store) if s["type"] == "correction")
+    # The note says where the wish holds, and is in the prompt at once.
+    assert (wish["work"], wish["short"], wish["lesson"]) == ("web pages", "For web pages: Use large rounded corners.", "Use large rounded corners.")
+    quick.quick_dream(store, config)
+    assert [lesson["text"] for lesson in quick.active(store)] == ["For web pages: Use large rounded corners."]
+    # Still waiting for a Deep Dream: a correction that does not say which
+    # kind of work it holds for (read by an older Songe, or a procedure the
+    # model wrote), one limited to its task, a retry, a tool's result.
+    assert quick.suitable(wish)
+    assert not quick.suitable({k: v for k, v in wish.items() if k != "work"})
+    assert not quick.suitable(wish | {"generality": "task"})
+    assert not quick.suitable(wish | {"type": "retry", "text": "Try again."})
+    assert not quick.suitable({k: v for k, v in wish.items() if k != "work"} | {"source": "tool", "type": "failed_result"})
