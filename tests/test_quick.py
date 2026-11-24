@@ -879,9 +879,11 @@ def test_a_skill_learned_from_a_tools_results_goes_to_sessions_that_offer_the_to
     assert {w["text"] for w in quick.waiting(store)["lessons"]} == {
         "In Wordle keep letters marked G in place.", "Run the entry points after a rename."}
     # A tool has its own small budget; the lessons for every session keep theirs.
-    for i in range(8):
-        add_signal(store, f"n{i}", f"Open with word number {i}: {'alpha beta gamma delta'.split()[i % 4]} {i * 7}.",
-                   kind="outcome", tool="guess", revision=10 + i)
+    more = ["Open with slate or crane.", "Move yellow letters elsewhere.", "Drop grey consonants afterwards.",
+            "Count vowels found so far.", "Prefer common endings late.", "Avoid plurals entirely.",
+            "Test double consonants sparingly.", "Read every refusal twice."]
+    for i, text in enumerate(more):
+        add_signal(store, f"n{i}", text, kind="outcome", tool="guess", revision=10 + i)
     quick.quick_dream(store, config, now=200.0)
     lessons = quick.active(store)
     assert sum(1 for lesson in lessons if lesson.get("tool") == "guess") == quick.TOOL_LESSONS
@@ -890,6 +892,38 @@ def test_a_skill_learned_from_a_tools_results_goes_to_sessions_that_offer_the_to
     # Without lessons for every session, the tool's block stands alone.
     only = [lesson for lesson in lessons if lesson.get("tool")]
     assert quick.block(only) == "" and quick.block(only, ["guess"]).startswith(quick.TOOL_BLOCK.format(tool="guess"))
+
+
+def test_a_tools_lessons_do_not_repeat_themselves(config, store):
+    """Live (the same word game, 100 games read): the game refused a word in
+    91 results and each refusal was written up in its own words, so the five
+    lessons of the guess tool were five wordings of one advice. Lessons of one
+    tool that share half the shorter one's words are one lesson, and a tool's
+    lesson is left out where a lesson for every session already says it."""
+    valid = ["Submit only valid 5-letter English words.",
+             "Check guesses are valid English words before submitting.",
+             "Check the guess is exactly 5 letters and a valid word."]
+    for i, text in enumerate(valid):
+        add_signal(store, f"v{i}", text, kind="failed_result", tool="guess", revision=1 + i)
+    add_signal(store, "r1", "Do not submit a word that has already been guessed.", kind="failed_result",
+               tool="guess", revision=5)
+    add_signal(store, "f1", "Deduce the secret word from feedback before guessing.", kind="outcome",
+               tool="guess", revision=6)
+    quick.quick_dream(store, config, now=100.0)
+    assert [(lesson["text"], lesson["count"]) for lesson in quick.active(store)] == [
+        (valid[2], 3),
+        ("Deduce the secret word from feedback before guessing.", 1),
+        ("Do not submit a word that has already been guessed.", 1)]
+    # Lessons for every session are grouped as before: these two stay apart.
+    for i, text in enumerate(valid[:2]):
+        add_signal(store, f"a{i}", text, kind="tool_error", generality="always", revision=10 + i)
+    quick.quick_dream(store, config, now=200.0)
+    lessons = quick.active(store)
+    assert [lesson["text"] for lesson in lessons if not lesson.get("tool")] == [valid[1], valid[0]]
+    # And the tool's own list no longer says the same thing a second time.
+    assert [lesson["text"] for lesson in lessons if lesson.get("tool")] == [
+        "Deduce the secret word from feedback before guessing.",
+        "Do not submit a word that has already been guessed."]
 
 
 async def test_the_proxy_adds_a_tools_lessons_where_the_tool_is_offered(config, store):

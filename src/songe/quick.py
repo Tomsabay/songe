@@ -92,6 +92,9 @@ def similar(a, b):
 # and within how many characters (beside the lessons every session gets).
 TOOL_LESSONS = 5
 TOOL_CHARS = 400
+# Two lessons of one tool are one when they share this part of the shorter
+# one's words.
+TOOL_SIMILAR = 0.5
 TOOL_BLOCK = "Lessons from earlier sessions that used the {tool} tool. Follow them when you use it:"
 
 
@@ -108,6 +111,18 @@ def tool_of(signal):
         return None
     tool = signal.get("tool")
     return tool if tool and reviewed(tool) and tool not in COMMAND_OUTPUT else None
+
+
+def alike(a, b):
+    """Two lessons about one tool that say the same thing. Looser than
+    similar(): a tool's lessons share one subject and are written anew each
+    time ("Submit only valid 5-letter English words." / "Check guesses are
+    valid English words before submitting."), and its list is short, so a
+    repeated line costs a place (live: 127 lessons of one tool were 50
+    lessons by similar(), the first five all one advice; 25 by this, the
+    first five four different advices)."""
+    x, y = words(a), words(b)
+    return bool(x and y) and len(x & y) / min(len(x), len(y)) >= TOOL_SIMILAR
 
 
 def state(store):
@@ -163,7 +178,7 @@ def candidates(store, limit, min_sessions=2):
         else:
             # A tool's lessons group among themselves.
             home = next((c for c in clusters if not c.get("rule") and c.get("tool") == tool
-                         and similar(text, c["text"])), None)
+                         and (alike if tool else similar)(text, c["text"])), None)
         if home:
             home["signals"].append(s["id"])
         else:
@@ -387,7 +402,7 @@ def split(store, clusters):
         home = next((lesson for lesson in published if set(lesson["signals"]) & set(c["signals"])
                      or (normal(c["text"]) == normal(lesson["text"]) if c.get("rule")
                          else not lesson.get("rule") and lesson.get("tool") == c.get("tool")
-                         and similar(c["text"], lesson["text"]))), None)
+                         and (alike if c.get("tool") else similar)(c["text"], lesson["text"]))), None)
         if home:
             home["signals"] = list(dict.fromkeys(home["signals"] + c["signals"]))
         else:
@@ -444,6 +459,8 @@ def quick_dream(store, config, now=None, merged=None, kept=None):
     lessons, used, count, taken = [], {}, {}, set()
     for c in sorted(pool, key=lambda lesson: lesson.get("tool") is not None):
         text, tool = c["text"], c.get("tool")
+        if tool and any(alike(text, lesson["text"]) for lesson in lessons if not lesson.get("tool")):
+            continue  # a lesson every session gets already says it
         most, chars = budgets.get(tool, (TOOL_LESSONS, TOOL_CHARS))
         count[tool] = count.get(tool, 0) + 1
         if count[tool] > most or (used.get(tool, 0) + len(text) > chars and used.get(tool)):
