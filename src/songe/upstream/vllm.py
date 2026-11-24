@@ -70,7 +70,8 @@ class VLLM:
         if version.get("id") == "base" or version.get("kind") == "base":
             from .reuse import served_base
 
-            self.routes.pop(version["identifier"], None)
+            # The route stays while the server is asked again: a request
+            # that arrives meanwhile must not fall back to the owned port.
             binding = await served_base(self.config, version, transport=self.transport)
             if not binding and getattr(self.config, "server_source_url", ""):
                 binding = await served_base(
@@ -79,6 +80,7 @@ class VLLM:
             if binding:
                 self.routes[version["identifier"]] = binding
                 return True
+            self.routes.pop(version["identifier"], None)
             return False
         existing = next(
             (m for m in await self._models() if m["id"] == version["identifier"]), None
