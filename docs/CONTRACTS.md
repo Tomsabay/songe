@@ -767,8 +767,11 @@ Training follows DESIGN 3 (OPSD). The student is base + LoRA on the exact logged
 context c; the teacher is the version the cycle started from (the original base in
 the first cycle), frozen, on the same c plus a marked hindsight block: the logged
 observations, then the idle review's "What went wrong" and "Lesson" when the reply
-was reviewed, then "Respond now with your own action." General anchors carry no
-hindsight and keep the original base as teacher. Forward KL over the full
+was reviewed, then "Respond now with your own action." A practice scene's
+hindsight is one note Songe wrote (the lesson and the feedback it came from), so
+its teacher gets that note as an aside instead: not part of the conversation,
+shown only to it, to follow where it applies and not to mention. General anchors
+carry no hindsight and keep the original base as teacher. Forward KL over the full
 vocabulary, each vocabulary entry's contribution clipped at `vocab_clip`
 (provisional 1.0 until measured), is evaluated on the student's freshly sampled
 action tokens only. Prompt, user, tool and historical assistant tokens never

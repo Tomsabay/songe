@@ -132,6 +132,25 @@ def test_select_trains_every_cleaned_step_without_the_backend(config):
     assert selected[1]["repeated"] == 2
 
 
+def test_a_practice_scenes_note_is_an_aside_the_teacher_does_not_answer(config):
+    """A scene's hindsight is a note Songe wrote, not evidence that followed
+    the step: the teacher gets it as an aside to follow and not to mention.
+    Shown as quoted observations, the teacher answered the note itself."""
+    note = "Note from an earlier, different task.\nLesson: Use uv, never pip."
+    scene = make("practice:s#v1", hindsight=[{"role": "user", "content": note}]) | {"practice": True}
+    student, teacher = (json.loads(bytes(p)) for p in paired_prompts(Tokenizer(), scene, config))
+    assert student["messages"] == scene["context"]
+    assert teacher["messages"][:-1] == scene["context"]
+    aside = teacher["messages"][-1]
+    assert aside["role"] == "user" and note in aside["content"]
+    assert aside["content"].startswith("(Not part of the conversation.")
+    assert aside["content"].endswith("do not mention it.)")
+    assert "observations" not in aside["content"]
+    # A real step's hindsight is evidence and keeps its marked block.
+    real = json.loads(bytes(paired_prompts(Tokenizer(), scene | {"practice": False}, config)[1]))
+    assert real["messages"][-1]["content"].startswith("Hindsight — quoted observations")
+
+
 def test_review_note_organises_only_the_teacher_hindsight(config, store):
     reply = {"role": "user", "content": "This deleted my file"}
     step = make("reviewed", hindsight=[reply])
