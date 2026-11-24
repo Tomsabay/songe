@@ -301,7 +301,7 @@ def mark_capacity_samples(config, store, saved):
         (s["id"], s["revision"]): s["required_sequence"]
         for s in saved.get("samples", [])
     }
-    for step in sample_pool(store):
+    for step in sample_pool(store, config):
         if step.get("split") == "heldout":
             continue  # Gate forwards do not use the student backprop limit.
         required = lengths.get((step["id"], revision_id(step)))
