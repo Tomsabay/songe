@@ -827,3 +827,25 @@ def test_non_latin_lessons_do_not_collide_resurrect_or_wipe_on_undo(config, stor
     quick.quick_dream(store, config, now=30.0)
     assert quick.active(store) == []
     assert e1["id"] != e2["id"]
+
+
+def test_ten_sentences_in_the_users_own_words_fit_the_list(config, store):
+    """Live (Qwen3.5-4B, 20 simulated users with ten stated preferences each,
+    605 to 890 characters per user): with room for 600 characters 155 of 200
+    sentences were in the prompt, on average 7.9 of a user's ten."""
+    habits = ["answer in metric units and leave the imperial ones out, even in recipes",
+              "write dates the ISO way, year first, wherever a date turns up in a text",
+              "use pnpm for anything that installs a JavaScript package, not npm or yarn",
+              "keep code samples free of comments unless I ask for an explanation",
+              "start every answer with the short version before the details",
+              "quote prices in euros and say when a figure is only an estimate",
+              "prefer the standard library over a new dependency for small jobs",
+              "write commit messages in the imperative mood and under sixty characters",
+              "name the file a snippet belongs to before showing the snippet",
+              "use British spelling in prose and American spelling in code identifiers"]
+    for n, habit in enumerate(habits):
+        add_signal(store, f"r{n}", f"Always {habit}.", revision=n + 1)
+    assert 600 < sum(len(habit) + 8 for habit in habits) <= quick.PROMPT_CHARS
+    quick.quick_dream(store, config)
+    assert len(quick.active(store)) == 10
+

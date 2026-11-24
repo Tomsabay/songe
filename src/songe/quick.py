@@ -163,7 +163,10 @@ CONSOLIDATE_SCHEMA = {
     },
     "required": ["lessons"],
 }
-PROMPT_CHARS = 600  # about 150 tokens for the whole list, on every request
+# About 300 tokens for the whole list, on every request. At 600 characters ten
+# sentences in a user's own words (about 60 to 90 characters each) did not
+# fit: on average 7.9 of 10 did.
+PROMPT_CHARS = 1200
 # The model repeating its instruction instead of writing one ("Merge lessons
 # 1, 2, 4 into one instruction: …").
 ECHO = re.compile(r"\blessons?\b|\b(merge|combine)\b|\b\d+\s*,\s*\d+", re.I)
