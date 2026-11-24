@@ -347,7 +347,10 @@ class Session:
                     )
                 )
                 answer = await self.model.ask(
-                    P.REVIEW.format(task=self.task_text(e["item"]), steps=view),
+                    P.REVIEW.format(
+                        task=self.task_text(e["item"]), steps=view,
+                        **(P.REVIEW_COMMANDS if e.get("commands", True) else P.REVIEW_TOOLS),
+                    ),
                     P.REVIEW_SCHEMA,
                     "review",
                 )

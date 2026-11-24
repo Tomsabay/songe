@@ -1020,3 +1020,70 @@ def test_not_every_sentence_in_the_first_person_is_a_preference(config, store):
     assert not [s for s in reading.signals(store) if s.get("preference")]
     quick.quick_dream(store, config)
     assert quick.active(store) == []
+
+
+def test_the_results_of_an_agents_own_tools_are_reviewed(store):
+    """Live (Qwen3.5-9B on vLLM, a word game played through a function tool
+    named guess, 100 games): reading asked no review question and kept no
+    signal from any result. Only results of tools named shell, execute, bash
+    or webfetch were looked at, so a refused word and a lost game taught
+    nothing. Now every tool's result is reviewed except those of tools that
+    read, list, search or change files, and a turn of shell commands is asked
+    exactly as before."""
+    from songe.reading import prompts as P
+    from songe.reading import views
+
+    assert all(views.reviewed(name) for name in ("bash", "shell", "webfetch", "guess", "mcp__tracker__create_issue"))
+    assert not any(views.reviewed(name) for name in ("read", "Read", "edit", "apply_patch", "TodoWrite", "list_files", None))
+
+    tools = [tool("guess", word="string"), tool("read", filePath="string")]
+    refused = "You attempted an invalid move. Reason: 'zzzzz' is not an English word."
+    turns = [
+        ({"role": "assistant", "content": "", "tool_calls": [call("a", "guess", word="crane")]},
+         {"role": "tool", "tool_call_id": "a", "content": "C R A N E\nX X X X G\nYou have 5 guesses left."}),
+        ({"role": "assistant", "content": "", "tool_calls": [call("b", "read", filePath="words.txt")]},
+         {"role": "tool", "tool_call_id": "b", "content": "aback\nabase\nabate"}),
+        ({"role": "assistant", "content": "", "tool_calls": [call("c", "guess", word="zzzzz")]},
+         {"role": "tool", "tool_call_id": "c", "content": refused}),
+    ]
+    history = [SYSTEM, {"role": "user", "content": "Game 1. Enter your guess to begin."}]
+    for action, result in turns:
+        store.record("/v1/chat/completions", {"messages": history, "tools": tools}, reply(action))
+        history = history + [action, result]
+    store.record("/v1/chat/completions", {"messages": history, "tools": tools},
+                 reply({"role": "assistant", "content": "I ran out of ideas."}))
+    store.reconstruct()
+
+    class Reviewing(FakeReader):
+        def __init__(self):
+            super().__init__()
+            self.reviews = []
+
+        async def ask(self, prompt, schema, name):
+            if name == "review":
+                self.asked.append(name)
+                self.reviews.append(prompt)
+                return {"signals": [{"step": 3, "type": "failed_result",
+                                     "quote": "'zzzzz' is not an English word", "why": "the word was refused"}]}
+            return await super().ask(prompt, schema, name)
+
+    reader = Reviewing()
+    assert read(store, reader) == 1
+    (question,) = reader.reviews
+    assert P.REVIEW_TOOLS["ran"] in question and P.REVIEW_TOOLS["errors"] in question
+    assert "X X X X G" in question and refused in question
+    assert "aback" not in question  # a file read is not a result to review
+    (signal,) = [s for s in reading.signals(store) if s["source"] == "tool"]
+    assert signal["type"] == "failed_result" and "not an English word" in signal["text"]
+    # Shell commands: the question that was checked against the answer key.
+    shell = [
+        {"kind": "user", "content": "run it"},
+        {"kind": "action", "step": 1, "text": "", "tool_calls": [{"id": "x", "name": "bash", "arguments": '{"command": "python3 guess.py 500"}'}]},
+        {"kind": "tool_result", "call": "x", "step": 1, "tool": "bash", "content": "500: higher"},
+    ]
+    (event,) = [e for e in views.events(shell, rules=[]) if e["kind"] == "review"]
+    assert event["commands"]
+    asked = P.REVIEW.format(task="t", steps="s", **P.REVIEW_COMMANDS)
+    assert "These are the commands the agent ran in one turn, with their output:\ns\n" in asked
+    assert 'compile checks like "syntax OK", or any error message (those are handled elsewhere).\n' in asked
+    assert "{" not in asked.replace("JSON", "")

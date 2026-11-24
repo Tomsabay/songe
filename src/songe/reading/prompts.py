@@ -113,7 +113,7 @@ Answer with JSON only."""
 REVIEW = """You are reviewing what a coding agent did for this request:
 {task}
 
-These are the commands the agent ran in one turn, with their output:
+{ran}
 {steps}
 
 Find outputs that carry information the agent must use, or that show its work is wrong or right, even though no error was reported. Most turns have none: return an empty list then.
@@ -121,8 +121,25 @@ Types:
 - "outcome": information the next steps should use. Example: "APPLE  Y...G" from a word game, "500: higher" from a guessing game.
 - "failed_result": output that shows the work is wrong without an error message. Example: after implementing a converter, "III -> 0, IV -> 0, IX -> 0".
 - "success": output that proves the requested work now does what the user asked. Example: the user wanted `python3 -m pkg circle 2` to print 12.57 and the output is "circle 2: 12.57".
-Not signals: output that merely shows a command ran, file contents, git status, listings, compile checks like "syntax OK", or any error message (those are handled elsewhere).
+Not signals: output that merely shows a command ran, file contents, git status, listings, compile checks like "syntax OK", or {errors}
 For each signal give the step number, the type, a short quote of the output, and why it matters. Answer with JSON only."""
+
+# The two wordings of the review. A turn of shell commands is asked as it
+# always was: the rules find a command's errors (exit codes, tracebacks), so
+# the review leaves them alone. Nothing else reads the result of an agent's
+# own function or MCP tool, so there a refusal or an error is itself a signal.
+REVIEW_COMMANDS = {
+    "ran": "These are the commands the agent ran in one turn, with their output:",
+    "errors": "any error message (those are handled elsewhere).",
+}
+REVIEW_TOOLS = {
+    "ran": "These are the tool calls the agent made in one turn, with their results:",
+    "errors": (
+        "the error message of a shell command (those are handled elsewhere). When one of the agent's other "
+        "tools refuses a call or says the result is wrong (a move that is not allowed, a value it does not "
+        'accept, an attempt that failed), that is a signal of type "failed_result".'
+    ),
+}
 
 RESPONSIBLE = """You are reviewing what a coding agent did for this request:
 {task}
