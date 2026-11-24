@@ -276,7 +276,11 @@ RETRIES = 3
 
 
 def rejected(store):
-    """{scene id: (revision, times)} of REJECTED."""
+    """{scene id: (revision, times)} of REJECTED. Like the rest of the
+    practice bookkeeping it says nothing until a dreams cycle has run in the
+    current mode (the worker clears it when the mode changes)."""
+    if store.get("learning_mode", "hindsight") != "dreams":
+        return {}
     return {
         scene: tuple(value) if isinstance(value, list) else (value, 1)
         for scene, value in (store.get(REJECTED) or {}).items()
