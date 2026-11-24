@@ -5,6 +5,7 @@ import asyncio
 import json
 
 import httpx
+import pytest
 
 from songe.models import registry
 from songe.parts import request_of
@@ -123,6 +124,72 @@ def test_a_session_is_read_once_into_signals(store):
     assert found["success"]["contradicted_by"] == "the user's correction"
     assert reading.pending(store) == []
     assert read(store, FakeReader()) == 0  # nothing new to read
+
+
+class Judging(FakeReader):
+    """Reads every user message as new work, and judges the turn as told."""
+
+    def __init__(self, standing, kind, wish=""):
+        super().__init__()
+        self.judged = {"standing": standing, "kind": kind, "wish": wish}
+
+    async def ask(self, prompt, schema, name):
+        answer = await super().ask(prompt, schema, name)
+        if name == "classify":
+            text = answer["parts"][0]["text"]
+            return {"parts": [{"says_something_is_wrong": False, "kind": "new_task", "type": None, "text": text}]}
+        return self.judged if name == "turn" else answer
+
+
+def test_a_standing_wish_read_as_new_work_is_still_a_correction(store):
+    # "i want in russian" after an answer: the split into parts calls it a new
+    # task, the turn question calls it a wish that holds from now on.
+    record_session(store, reply_text="i want in russian")
+    reader = Judging("yes", "task", "Answer in Russian.")
+    read(store, reader)
+    assert reader.asked.count("turn") == 1  # once per user turn after an answer
+    wish = next(s for s in reading.signals(store) if s["type"] == "correction")
+    assert (wish["text"], wish["turn_kind"], wish["source"]) == ("i want in russian", "lasting", "user")
+    # The wish as the turn question worded it is the note, not the lesson
+    # written about the work at hand.
+    assert wish["lesson"] == wish["short"] == "Answer in Russian." and wish["generality"] == "always"
+
+
+@pytest.mark.parametrize("kind", ["once", "task", "reaction"])
+def test_a_turn_that_is_no_standing_wish_adds_nothing(store, kind):
+    record_session(store, reply_text="could you add a paragraph on costs?")
+    read(store, Judging("no", kind))
+    assert [s for s in reading.signals(store) if s["type"] == "correction"] == []
+
+
+def test_a_long_message_is_work_and_is_not_asked_about(store):
+    record_session(store, reply_text="Rewrite this report for the board. " + "It has many paragraphs. " * 20)
+    reader = Judging("yes", "task")
+    read(store, reader)
+    assert "turn" not in reader.asked
+    assert [s for s in reading.signals(store) if s["type"] == "correction"] == []
+
+
+def test_an_example_of_the_question_pasted_back_is_not_the_users_wish():
+    from songe.reading import prompts as P
+
+    pasted = {"standing": "yes", "kind": "task", "wish": "Answer in Chinese."}
+    assert P.turn_verdict(pasted, "restart the duel") == ("task", "")
+    assert P.turn_verdict(pasted, "reply me in chinese") == ("lasting", "Answer in Chinese.")
+    assert P.turn_verdict(pasted, "请用中文回答") == ("lasting", "Answer in Chinese.")
+    assert P.turn_verdict({"standing": "yes", "kind": "once", "wish": "Use metric units."}, "everything in metric")[0] == "lasting"
+
+
+def test_what_the_turn_was_is_kept_with_its_signals(store):
+    record_session(store, reply_text="make it shorter")
+
+    class Once(FakeReader):
+        async def ask(self, prompt, schema, name):
+            return {"standing": "no", "kind": "once"} if name == "turn" else await super().ask(prompt, schema, name)
+
+    read(store, Once())
+    correction = next(s for s in reading.signals(store) if s["type"] == "correction")
+    assert correction["turn_kind"] == "once"
 
 
 def test_a_rule_the_user_states_is_captured_even_if_the_model_misses_it(store):
@@ -246,6 +313,7 @@ def test_the_client_stops_when_the_user_returns(store):
 ANSWERS = {
     "classify": {"parts": [{"says_something_is_wrong": True, "kind": "feedback",
                             "type": "correction", "text": "No, you changed the wrong file."}]},
+    "turn": {"standing": "no", "kind": "once"},
     "responsible": {"steps": [2], "reason": "wrong file"},
     "lesson": {"lesson": "Check the file first.", "instance": "x.py", "generality": "kind",
                "verifiable": None},

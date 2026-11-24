@@ -116,6 +116,13 @@ or by auto-dream:
   "about_me" is kept, not a reaction to the last answer, a line about the job,
   or a line of a text handed over to be worked on. It points at the step it is
   about, or at the answer it got when nothing came before.
+- Every user message that follows an answer is judged once by the served
+  model (`turn`, with thinking): a standing wish about how this user wants
+  things, a change wanted for this answer only, new work, or a reaction. Only
+  a standing wish becomes a note in the prompt at once, also when the split
+  into parts read it as a new task. A change wanted once becomes a note when
+  the same wish comes up in a second conversation. New work and reactions do
+  not become notes. A sentence shaped like a rule stays a rule.
 - Deep Dream (2–3 hours, skills): reads what is left, writes practice, trains,
   checks. When one is adopted, the lessons whose signals it trained leave the
   prompt (`quick.absorb`); an undo lets them come back.

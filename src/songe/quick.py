@@ -92,9 +92,10 @@ def active(store):
 
 def suitable(signal):
     """A lesson for the prompt: one read as applying to any task ("always":
-    tool facts, standing preferences), or a rule the user stated in their own
-    words (a sentence of theirs shaped like a rule). Other feedback (a
-    reaction in a game, a one-off correction) waits for Deep Dream."""
+    tool facts, standing preferences), a rule the user stated in their own
+    words (a sentence of theirs shaped like a rule), or what the user said in
+    a turn judged to be a standing wish. Other feedback (a reaction in a game,
+    a one-off correction) waits for Deep Dream."""
     lesson = (signal.get("lesson") or "").strip()
     if not lesson:
         return False
@@ -102,6 +103,14 @@ def suitable(signal):
         # A preference of the user's own, in their words: it holds whatever
         # the lesson written beside it was read as.
         return stated_sentence(signal) is not None
+    turn = signal.get("turn_kind")
+    if turn and signal.get("source") == "user" and signal.get("from") != "rules":
+        # Reading judged what the user's turn was (prompts.TURN), and that
+        # decides, whatever label the lesson got: a standing wish is for the
+        # prompt at once; a change wanted once is a candidate that has to come
+        # up in two conversations (candidates); new work and reactions are
+        # not for the prompt. A sentence shaped like a rule stays a rule.
+        return turn in ("lasting", "once") or rule_sentence(signal.get("text")) is not None
     if signal.get("generality") == "task":
         return False
     if signal.get("from") == "rules" and signal.get("source") == "user":
@@ -141,7 +150,15 @@ def candidates(store, limit, min_sessions=2):
     # A tool fact or standing preference read as "always" enters the prompt
     # once it has come up in two conversations; a rule the user stated, at once.
     sessions = {s["id"]: s.get("session") for s in signals}
-    clusters = [c for c in clusters if c.get("rule") or len({sessions.get(i) for i in c["signals"]}) >= min_sessions]
+    # A change the user wanted once ("make it shorter") is a lesson for the
+    # prompt only when the same wish came up in another conversation too.
+    once = {s["id"] for s in signals if s.get("turn_kind") == "once" and s.get("source") == "user"}
+
+    def enough(c):
+        need = max(min_sessions, 2) if all(i in once for i in c["signals"]) else min_sessions
+        return len({sessions.get(i) for i in c["signals"]}) >= need
+
+    clusters = [c for c in clusters if c.get("rule") or enough(c)]
     clusters.sort(key=lambda c: (-len(c["signals"]), -c["newest"]))
     return clusters[:limit]
 

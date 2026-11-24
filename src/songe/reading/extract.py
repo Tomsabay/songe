@@ -292,6 +292,29 @@ class Session:
                     "classify",
                 )
                 parts = [p for p in answer.get("parts") or [] if isinstance(p, dict)]
+                # What the turn is, judged on its own: a standing wish about
+                # how this user wants things, a change wanted once, new work,
+                # or a reaction. A standing wish the split above did not read
+                # as feedback ("i want in russian", read as a new task) is a
+                # correction all the same.
+                verdict, wish = ("task", "") if len(e["text"]) > P.TURN_CHARS else P.turn_verdict(
+                    await self.model.ask(
+                        P.TURN.format(
+                            earlier=self.short("\n".join(user_messages(items, e["item"]))),
+                            steps=self.short(step_lines(items, turn + 1, e["item"])),
+                            message=e["text"],
+                        ),
+                        P.TURN_SCHEMA,
+                        "turn",
+                    ),
+                    e["text"],
+                )
+                if verdict == "lasting" and not any(
+                    p.get("kind") == "feedback" and p.get("type") in P.TYPES for p in parts
+                ):
+                    parts = parts + [{"says_something_is_wrong": True, "kind": "feedback",
+                                      "type": "correction", "text": e["text"]}]
+                before = len(self.signals)
                 for p in parts:
                     # The yes/no is asked first; trust it over the type.
                     if (
@@ -309,6 +332,12 @@ class Session:
                             p.get("text") or e["text"],
                             f"as the user's message after step {e['after_step']}",
                         )
+                for signal in self.signals[before:]:
+                    signal["turn_kind"] = verdict  # quick.suitable reads it
+                    if wish:
+                        # The standing wish, as the turn question worded it,
+                        # is the lesson and the note.
+                        signal.update(lesson=wish, short=wish, generality="always")
                 if any(p.get("kind") == "new_task" for p in parts):
                     self.task_starts.append(e["item"])
                 e["classified"] = parts

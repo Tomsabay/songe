@@ -849,3 +849,23 @@ def test_ten_sentences_in_the_users_own_words_fit_the_list(config, store):
     quick.quick_dream(store, config)
     assert len(quick.active(store)) == 10
 
+
+def test_a_change_wanted_once_takes_two_conversations_and_a_standing_wish_one(config, store):
+    # Reading judged each user turn (prompts.TURN): that decides, whatever
+    # label the lesson got.
+    def said(sid, session, turn, lesson):
+        payload = {"id": sid, "session": session, "type": "correction", "source": "user", "lesson": lesson,
+                   "generality": "always", "revision": 1, "text": "shorter please", "turn_kind": turn}
+        with store.connect() as db:
+            db.execute("INSERT INTO signals VALUES (?,?,?,?,?,NULL)", (sid, store.model_id, session, 1, json.dumps(payload)))
+
+    def lessons():
+        return {c["text"] for c in quick.candidates(store, 30, config.quick_min_sessions)}
+
+    said("w1", "a", "lasting", "Answer in Russian.")
+    said("o1", "a", "once", "Keep the summary under one hundred words.")
+    said("n1", "a", "task", "Write unit tests for every new function.")
+    said("r1", "a", "reaction", "State plainly that you are an AI assistant.")
+    assert lessons() == {"Answer in Russian."}
+    said("o2", "b", "once", "Keep the summary under a hundred words.")
+    assert {text.split(" under ")[0] for text in lessons()} == {"Answer in Russian.", "Keep the summary"}

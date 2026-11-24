@@ -53,7 +53,7 @@ class Reader:
         model,
         *,
         still_idle=None,
-        think=("classify",),
+        think=("classify", "turn"),
         max_tokens=6000,
         timeout=600,
         client=None,
@@ -65,7 +65,8 @@ class Reader:
         self.template_switch = server == "vllm"
         self.still_idle = still_idle
         # Which questions the model thinks about first: slower, steadier.
-        # Measured on the answer key: thinking helps classify only.
+        # Measured on the answer key: thinking helps classify only. The turn
+        # question (prompts.TURN) needs it too: see there.
         self.think = set(think)
         self.max_tokens = max_tokens
         self.client = client or httpx.AsyncClient(timeout=timeout, trust_env=False)

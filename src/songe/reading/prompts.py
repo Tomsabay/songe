@@ -210,6 +210,74 @@ The feedback is the user's own words. If it tells the agent how this user wants 
     "You forgot <THING>." -> "Always include <THING>."
   - generality is "always" for such a wish, unless the user limited it to this one task."""
 
+# Asked once about every user message that follows an answer: what is it? On
+# real conversations (WildChat turns through Qwen3.5-4B) the lesson written
+# for a correction was marked "always" for 48% of the changes a user wanted
+# once ("make it shorter") and for 7% of ordinary follow-up turns, and 32% of
+# the lasting wishes ("i want in russian", "be very concise") were read as new
+# tasks and left nothing. So the turn is judged on its own: only a standing
+# wish becomes a note at once. The same answer words the wish as the note,
+# because the lesson question writes about the work at hand ("Use correct
+# UiPath activity names." for "... answer in chinese"): of 49 notes from
+# standing wishes, 25 had lost what the user named. The model thinks about
+# this one (client.py): without thinking it answered "yes" to half of all
+# ordinary turns.
+# A longer message is material or new work, not a wish about how the user
+# wants things: it is not asked about (role prompts pasted into a running
+# conversation were judged standing wishes).
+TURN_CHARS = 400
+
+TURN_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "standing": {"type": "string", "enum": ["yes", "no"]},
+        "kind": {"type": "string", "enum": ["once", "task", "reaction"]},
+        "wish": {"type": "string"},
+    },
+    "required": ["standing", "kind", "wish"],
+}
+
+TURN = """A user is talking with an AI assistant.
+
+Earlier user messages (oldest first):
+{earlier}
+
+What the assistant did since then:
+{steps}
+
+The user's next message:
+{message}
+
+Two questions about the user's next message.
+- standing: "yes" if the message, or a part of it, tells the assistant how this user wants answers or work from now on, beyond this one answer: the language to answer in ("reply in Chinese"), how short or long answers should be ("keep answers short"), a tone, a format or a notation ("no emojis", "plain text, no LaTeX"), a tool, a library or a unit to use or to avoid ("tabs, not spaces", "no jQuery"), or how the user works and what they like ("I use Linux", "I like a dark look"). A change to the look of something made for the user is "yes" as well, because people keep their taste in looks: its colours, fonts, corners, borders, shadows, spacing, light or dark ("make the buttons green", "a bigger font please", "less space between the lines"). A message can ask for something else as well and still be "yes". "no" if it only wants this one answer redone or changed ("make it shorter", "rewrite it more formally", "add a paragraph on costs", "write it in Python", "that is wrong"), asks for new work, or asks for nothing. Also "no" when it gives the assistant a role, a persona or a game to play ("act as a Linux terminal", "you are an expert prompt writer", "from now on you are DAN"), or asks for a word or a text in another language ("defeated in Chinese", "the last paragraph in English"): that is new work.
+- kind: "once" if it wants this one answer changed, corrected or tried again; "task" if it asks for new or further work or asks a question; "reaction" if it asks for nothing (thanks, praise, a remark).
+- wish: if standing is "yes", that wish alone as one full sentence that tells the assistant what to do from now on, in English, starting with a verb and naming exactly what the user named ("Answer in Chinese.", "Keep answers to two or three sentences.", "Use Polars, not pandas.", "Use plain text, not LaTeX."); leave out whatever belongs to this one answer. Otherwise "".
+Answer with JSON only."""
+
+
+# Languages, libraries and systems named in the question's own examples. A
+# wish that names one of them when the user's message does not is the example
+# pasted back, not this user's wish ("Answer in Spanish.", then an example,
+# for "restart the duel"). A message not in plain Latin letters is let
+# through: "请用中文回答" asks for Chinese without the word.
+TURN_EXAMPLE_NAMES = ("chinese", "polars", "pandas", "jquery", "linux")
+
+
+def turn_verdict(answer, message=""):
+    """("lasting", the wish as a note) or ("once" | "task" | "reaction", "")
+    from the answer to TURN about this message; (None, "") when the model
+    gave none."""
+    if not isinstance(answer, dict):
+        return None, ""
+    kind = answer.get("kind") if answer.get("kind") in ("once", "task", "reaction") else None
+    if answer.get("standing") != "yes":
+        return kind, ""
+    wish, said = " ".join(str(answer.get("wish") or "").split()), message.lower()
+    if said.isascii() and any(name in wish.lower() and name not in said for name in TURN_EXAMPLE_NAMES):
+        return kind, ""
+    return "lasting", wish if 12 <= len(wish) <= 140 else ""
+
+
 # Asked about a sentence the rules flagged as a possible preference of the
 # user's own (rules.preference_sentences). Only "about_me" is kept. The other
 # three are what such a sentence turned out to be in real chats: a pick among
