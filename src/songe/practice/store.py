@@ -178,7 +178,7 @@ async def write_one(store, reader, signal, variant, request, items, lessons, wor
         instance=timeline.clip(shorten_paths(signal.get("instance") or "", workdir), 600),
         distance=P.DISTANCE.get(signal.get("generality"), P.DISTANCE["kind"]).format(topic=topic),
         variant=variant,
-        tools=P.tool_lines(tools),
+        tools=P.tools_section(request.get("tools"), tools),
         examples=json.dumps(P.TEMPLATE),
     )
     scene = await reader.ask(prompt, P.DREAM_SCHEMA, "dream", temperature=0.8, max_tokens=4000)
