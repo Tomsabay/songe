@@ -159,11 +159,17 @@ class Session:
         """What the lesson question adds for feedback that is a tool's output."""
         if source != "tool":
             return ""
+        # The attempt ended on this result when all that follows is the agent's
+        # own closing words. A call still waiting for its result, a request
+        # that failed, or nothing at all after the result is a session in
+        # progress: read then, it would be told "the task was not completed",
+        # and a Quick Dream could publish that before the session is read again.
         later = self.items[item + 1 :]
-        failed = type_ in ("failed_result", "tool_error")
-        if not failed or any(it["kind"] in ("user", "tool_result") for it in later):
+        stopped = bool(later) and all(
+            it["kind"] == "action" and not it.get("tool_calls") and not it.get("failed") for it in later
+        )
+        if type_ not in ("failed_result", "tool_error") or not stopped:
             return P.TOOL_FACT
-        # A failure, and nothing came after it but (at most) the agent's last words.
         lines = step_lines(self.items, self.task_start(item) + 1, item + 1).splitlines()
         if len(lines) > ATTEMPT_LINES:
             lines = [f"(the first {len(lines) - ATTEMPT_LINES} steps are left out)", *lines[-ATTEMPT_LINES:]]

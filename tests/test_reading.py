@@ -1361,3 +1361,43 @@ def test_the_lesson_question_for_a_tools_output_keeps_what_it_named(store):
     # A shape pasted back with its placeholders is no lesson.
     assert P.copied_example("<NAME> is not installed here; use <WORKED>.")
     assert not P.copied_example("pytest is not installed here; use python -m pytest.")
+
+
+def test_a_failure_ends_an_attempt_only_once_the_agent_has_stopped(store):
+    """A session can be read while it is going on: a Quick Dream starts when
+    the model server has been quiet for a while, and one long command is
+    quiet that long. The newest failed result is then not the end of
+    anything, the agent's next call is waiting for its result. It is asked
+    about like any other output, and as a whole attempt ("the task was not
+    completed") only when the agent's own closing words follow it."""
+    from songe.reading import prompts as P
+
+    edit = dict(filePath="y.py", oldString="a", newString="b")
+    missing = "/bin/bash: line 1: pytest: command not found\nExit code: 127"
+    history = [SYSTEM, {"role": "user", "content": "fix the lexer"}]
+    for action, result in (tool_step("a", "edit", "Edited y.py", **edit),
+                           tool_step("b", "shell", missing, command="pytest")):
+        store.record("/v1/chat/completions", {"messages": history, "tools": TOOLS}, reply(action))
+        history = history + [action, result]
+    # The agent tries another way; that call has no result yet.
+    again, no_module = tool_step("c", "shell", "/usr/bin/python: No module named pytest\nExit code: 1",
+                                 command="python -m pytest")
+    store.record("/v1/chat/completions", {"messages": history, "tools": TOOLS}, reply(again))
+    store.reconstruct()
+    reader = LessonQuestions()
+    assert read(store, reader) == 1
+    (question,) = reader.questions
+    assert "command not found" in question and P.TOOL_FACT in question
+    assert "the conversation ended with it" not in question
+    # The result comes, it failed too, and the agent gives up: now the attempt has ended, on that result.
+    history = history + [again, no_module]
+    store.record("/v1/chat/completions", {"messages": history, "tools": TOOLS},
+                 reply({"role": "assistant", "content": "I could not run the tests."}))
+    store.reconstruct()
+    reader = LessonQuestions()
+    assert read(store, reader) == 1
+    went_on = [q for q in reader.questions if P.TOOL_FACT in q]
+    ended = [q for q in reader.questions if "the conversation ended with it" in q]
+    assert len(went_on) == 1 and len(ended) == 1 and len(reader.questions) == 2
+    assert "command not found" in went_on[0]
+    assert "No module named pytest" in ended[0]
