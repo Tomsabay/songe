@@ -76,8 +76,8 @@ async def test_a_cut_off_answer_is_forced_from_the_reasoning_so_far(store):
 
 
 async def test_a_server_that_refuses_the_thinking_cap_is_asked_without_it(store):
-    """Live (vLLM 0.34.0 serving Mistral-7B-Instruct-v0.2 and TinyLlama with
-    the server's defaults, so without --reasoning-parser): every reader
+    """Live (vLLM 0.34.0 serving Mistral-7B-Instruct-v0.2 with the server's
+    defaults, so without --reasoning-parser): every reader
     question was answered 400 "thinking_token_budget is set but
     reasoning_config is not configured". The reader took the first refusal for
     "no structured output", asked plainly, was refused again, and no session
@@ -204,3 +204,74 @@ async def test_each_server_gets_the_reasoning_controls_it_honours(store):
     for name in ("lmstudio", "ollama"):
         assert "chat_template_kwargs" not in sent[name] and "thinking_token_budget" not in sent[name]
         assert sent[name]["reasoning_effort"] == "none"
+
+
+async def test_a_model_with_a_small_window_is_asked_for_no_more_than_it_has(store, monkeypatch):
+    monkeypatch.setattr(reading_client, "WINDOW", {}, raising=False)
+    sent = []
+
+    def answer(body):
+        return httpx.Response(200, json={"choices": [{"finish_reason": "stop",
+                                                      "message": {"content": json.dumps({"ok": True})}}]})
+
+    def server(request):
+        # vLLM 0.34.0 serving a model with a 4,096-token window.
+        body = json.loads(request.content)
+        sent.append((body["max_tokens"], "response_format" in body))
+        if body["max_tokens"] > 4096:
+            return httpx.Response(400, json={"error": {
+                "message": f"max_tokens={body['max_tokens']} cannot be greater than max_model_len=4096. "
+                           f"Please request fewer output tokens. (parameter=max_tokens, value={body['max_tokens']})",
+                "type": "BadRequestError", "param": "max_tokens", "code": 400}})
+        return answer(body)
+
+    def reader_for(url, handler=server):
+        return reading_client.Reader(store, url, "m", server="vllm",
+                                     client=httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+
+    reader = reader_for("http://small/v1")
+    # Refused for 6,000 tokens, asked again for the 4,096 the model has;
+    # the refusal is not taken for "no structured output".
+    assert await reader.ask("first question", {"type": "object"}, "review") == {"ok": True}
+    assert sent == [(6000, True), (4096, True)] and reader.structured
+    # A question meant to think asks for three times as much: lowered before it is sent.
+    await reader.ask("second question", {"type": "object"}, "classify")
+    assert sent[2:] == [(4096, True)]
+    await reader.close()
+    # Remembered for this server and model ...
+    again = reader_for("http://small/v1")
+    await again.ask("third question", {"type": "object"}, "review")
+    assert sent[3:] == [(4096, True)]
+    await again.close()
+    # ... and only for them.
+    other = reader_for("http://other/v1")
+    await other.ask("fourth question", {"type": "object"}, "review")
+    assert sent[4:] == [(6000, True), (4096, True)]
+    await other.close()
+
+    # A question longer than the window cannot be answered: the moment is
+    # given up and remembered, and the reading goes on (it used to fail there
+    # at every read). The refusal is not taken for "no structured output".
+    asked = []
+
+    def too_long(request):
+        asked.append(json.loads(request.content)["messages"][0]["content"])
+        if "long session" in asked[-1] or "cut off" in asked[-1]:
+            return httpx.Response(400, json={"error": {
+                "message": "This model's maximum context length is 4096 tokens. However, your prompt contains at "
+                           "least 4097 input tokens, which exceeds this limit even without any output tokens.",
+                "type": "BadRequestError", "param": "input_tokens", "code": 400}})
+        if "nearly full" in asked[-1]:
+            # Little room left for the answer: it is cut off.
+            return httpx.Response(200, json={"choices": [{"finish_reason": "length",
+                                                          "message": {"content": '{"steps": [1, '}}]})
+        return answer(None)
+
+    small = reader_for("http://small/v1", too_long)
+    gave_up = await small.ask("a long session", {"type": "object"}, "review")
+    assert gave_up.get("gave_up") and len(asked) == 1 and small.structured
+    assert await small.ask("a long session", {"type": "object"}, "review") == gave_up and len(asked) == 1
+    # Cut off, and the forced question (with the reasoning so far) no longer fits.
+    assert (await small.ask("a nearly full window", {"type": "object"}, "review")).get("gave_up")
+    assert await small.ask("a short session", {"type": "object"}, "review") == {"ok": True}
+    await small.close()
