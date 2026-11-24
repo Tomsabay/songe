@@ -55,6 +55,8 @@ def workdir_of(rows):
 
 # Command results the review shows in full: the turn's last ones.
 REVIEW_FULL = 8
+# Steps of an attempt shown, one line each, when the conversation ended on a failure.
+ATTEMPT_LINES = 40
 # A reply that only says to go on carries no feedback ("ok" or "yes" can be
 # approvals, so they are still classified).
 KEEP_GOING = re.compile(
@@ -152,6 +154,20 @@ class Session:
                 {s for s in edits if s in in_turn} | ({max(in_turn)} if in_turn else set())
             )
         return [edits[-1]] if edits else list(steps)
+
+    def tool_notes(self, source, type_, item):
+        """What the lesson question adds for feedback that is a tool's output."""
+        if source != "tool":
+            return ""
+        later = self.items[item + 1 :]
+        failed = type_ in ("failed_result", "tool_error")
+        if not failed or any(it["kind"] in ("user", "tool_result") for it in later):
+            return P.TOOL_FACT
+        # A failure, and nothing came after it but (at most) the agent's last words.
+        lines = step_lines(self.items, self.task_start(item) + 1, item + 1).splitlines()
+        if len(lines) > ATTEMPT_LINES:
+            lines = [f"(the first {len(lines) - ATTEMPT_LINES} steps are left out)", *lines[-ATTEMPT_LINES:]]
+        return P.ENDED.format(attempt=self.short("\n".join(lines)))
 
     async def add(self, source, type_, item, steps, text, where):
         signal = {
@@ -254,8 +270,10 @@ class Session:
                 feedback=self.short(text[:1500]) + about,
                 reason=signal["reason"],
                 after=self.after_view(item),
-                # The user's own words can hold a wish to keep as they said it.
-                wish=P.USER_WISH if source == "user" else "",
+                # The user's own words can hold a wish to keep as they said it;
+                # a tool's output can hold a fact to keep as it said it; and a
+                # failure the conversation ended on is about the whole attempt.
+                wish=P.USER_WISH if source == "user" else self.tool_notes(source, type_, item),
             ),
             P.LESSON_SCHEMA,
             "lesson",

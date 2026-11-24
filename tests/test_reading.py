@@ -1284,3 +1284,65 @@ def test_the_results_of_an_agents_own_tools_are_reviewed(store):
     assert "These are the commands the agent ran in one turn, with their output:\ns\n" in asked
     assert 'compile checks like "syntax OK", or any error message (those are handled elsewhere).\n' in asked
     assert "{" not in asked.replace("JSON", "")
+
+
+def test_the_lesson_question_for_a_tools_output_keeps_what_it_named(store):
+    """Live (Qwen3.5-4B and 9B on vLLM, 30 coding tasks, issue #144): "pytest:
+    command not found" was stored as "Install missing dependencies before
+    running tests." and the next task ran the same failing command. The
+    question now says that what a tool's output names is the lesson. And a
+    failed result the conversation ended on (a build that never passed, a
+    lost game) is asked about as a whole attempt, with all its steps."""
+    from songe.reading import prompts as P
+
+    class Recording(FakeReader):
+        def __init__(self):
+            super().__init__()
+            self.questions = []
+
+        async def ask(self, prompt, schema, name):
+            if name == "lesson":
+                self.questions.append(prompt)
+            return await super().ask(prompt, schema, name)
+
+    def record(first, steps, last):
+        history = [SYSTEM, {"role": "user", "content": first}]
+        for action, result in steps:
+            store.record("/v1/chat/completions", {"messages": history, "tools": TOOLS}, reply(action))
+            history = history + [action, result]
+        store.record("/v1/chat/completions", {"messages": history, "tools": TOOLS},
+                     reply({"role": "assistant", "content": last}))
+
+    def step(cid, name, result, **args):
+        return ({"role": "assistant", "content": "", "tool_calls": [call(cid, name, **args)]},
+                {"role": "tool", "tool_call_id": cid, "content": result})
+
+    edit = dict(filePath="x.py", oldString="a", newString="b")
+    # Fails, is fixed, passes: the failure is one step of a task that went on.
+    record("fix the parser", [step("a", "edit", "Edited x.py", **edit),
+                              step("b", "shell", "1 failed, 2 passed\nExit code: 1", command="pytest"),
+                              step("c", "edit", "Edited x.py", **edit),
+                              step("d", "shell", "3 passed\nExit code: 0", command="pytest")], "Fixed.")
+    # Fails and stops there: the task was not completed.
+    record("fix the lexer", [step("e", "edit", "Edited y.py", **edit),
+                             step("f", "shell", "/bin/bash: line 1: pytest: command not found\nExit code: 127", command="pytest")],
+           "I could not run the tests.")
+    store.reconstruct()
+    reader = Recording()
+    assert read(store, reader) == 2
+    went_on, ended = sorted(reader.questions, key=lambda q: "command not found" in q)
+    assert P.TOOL_FACT in went_on and P.TOOL_FACT not in ended
+    assert "name exactly what the output named" in P.TOOL_FACT
+    assert "the conversation ended with it" not in went_on
+    assert "the conversation ended with it" in ended and "names it exactly as written" in ended
+    attempt = ended.split("All steps of the attempt, one line each:\n", 1)[1]
+    assert "STEP 1: edit" in attempt and "STEP 2: shell pytest" in attempt and "Exit code: 127" in attempt
+    # The user's own words are asked about as before.
+    record_session(store, started=None)
+    reader = Recording()
+    read(store, reader)
+    assert any(P.USER_WISH in q for q in reader.questions)
+    assert all(P.TOOL_FACT not in q for q in reader.questions if P.USER_WISH in q)
+    # A shape pasted back with its placeholders is no lesson.
+    assert P.copied_example("<NAME> is not installed here; use <WORKED>.")
+    assert not P.copied_example("pytest is not installed here; use python -m pytest.")
