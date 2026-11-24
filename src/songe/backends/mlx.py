@@ -13,11 +13,20 @@ import uuid
 from ..sleep.prompts import paired_prompts, response_positions
 from ..steps import tool_outcome
 from ..storage import private_dir, write_json
-from .objective import divergence
+from .objective import divergence, view_key
 
 
 class Backend:
     kind = "mlx"
+    # TorchBackend reads in bigger chunks in the gate; MLX keeps
+    # teacher_chunk: Metal running out of memory ends the process rather
+    # than raising, so a chunk cannot be tried and halved.
+    read_chunk = None
+
+    def prompt_state(self, prompt):
+        """No shared prompt read on MLX (TorchBackend.prompt_state): each
+        user reads the prompt itself."""
+        return None
 
     def __init__(self, config, check=lambda: None, train=True):
         import mlx.core as mx
@@ -367,14 +376,15 @@ class Backend:
             "reason": "Explicit successful logged actions only",
         }
 
-    def kl_from(self, base, prompt, teacher_prompt, y, *, hindsight=False):
-        return self.measure(base, prompt, teacher_prompt, y, hindsight=hindsight)["kl"]
+    def kl_from(self, base, prompt, teacher_prompt, y, *, hindsight=False, views=None):
+        return self.measure(base, prompt, teacher_prompt, y, hindsight=hindsight, views=views)["kl"]
 
-    def measure(self, base, prompt, teacher_prompt, y, *, hindsight=False):
+    def measure(self, base, prompt, teacher_prompt, y, *, hindsight=False, views=None):
         """This version against the reference along y, per answer token: the
         KL, and what a mean KL does not show: each side's entropy (nats) and
         how often their most likely token is the same. From the logits the
-        KL is computed on, so it costs no forward pass."""
+        KL is computed on, so it costs no forward pass. views: as
+        TorchBackend.measure (the reference's view, read once)."""
         reference = base.teacher if hindsight else base.base
         mx = self.mx
 
@@ -385,10 +395,15 @@ class Backend:
             # A token with no probability adds nothing (0 * -inf is not 0).
             return -float(mx.where(p > 0, p * log_p, 0.0).sum())
 
-        # Passed in, not entered here: teacher_hidden reads with the original
-        # base unless it is given the context that selects the weights (and it
-        # evaluates the result before leaving that context).
-        teacher_h = base.teacher_hidden(teacher_prompt, y, reference())
+        key = view_key(hindsight, teacher_prompt, y) if views is not None else None
+        teacher_h = views.get(key) if key is not None else None
+        if teacher_h is None:
+            # Passed in, not entered here: teacher_hidden reads with the
+            # original base unless it is given the context that selects the
+            # weights (and it evaluates the result before leaving that context).
+            teacher_h = base.teacher_hidden(teacher_prompt, y, reference())
+            if key is not None:
+                views[key] = teacher_h
         candidate_h = self.hidden(prompt + y[:-1])[:, response_positions(prompt, y)]
         mx.eval(candidate_h)
         total = {"kl": 0.0, "entropy": 0.0, "reference_entropy": 0.0, "agreement": 0.0}
