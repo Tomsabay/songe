@@ -913,3 +913,109 @@ def test_a_failed_bash_command_is_a_failed_result():
     assert classify("bash", "README.md\nsrc\n", run("ls")) is None
     # Mentioning the phrase is not hitting it.
     assert classify("bash", "No module named in this repo is missing\n", run("cat notes.md")) is None
+
+
+def record_chat(store, *turns):
+    """A plain chat, no tools and no system message: (user, answer) pairs."""
+    history = []
+    for said, answer in turns:
+        history = history + [{"role": "user", "content": said}]
+        store.record("/v1/chat/completions", {"messages": history}, reply({"role": "assistant", "content": answer}))
+        history = history + [{"role": "assistant", "content": answer}]
+    store.reconstruct()
+
+
+class Judge(FakeReader):
+    """The model asked what a candidate sentence is: "about_me" for the ones
+    named, "reaction" for the rest. Keeps the questions."""
+
+    def __init__(self, about_me=()):
+        super().__init__()
+        self.about_me, self.questions = set(about_me), []
+
+    async def ask(self, prompt, schema, name):
+        if name != "preference":
+            return await super().ask(prompt, schema, name)
+        self.questions.append(prompt)
+        sentence = prompt.rsplit("One sentence of that message:\n", 1)[1].split("\n")[0]
+        return {"kind": "about_me" if sentence in self.about_me else "reaction"}
+
+
+def test_a_preference_the_user_states_about_themself_becomes_a_note_in_their_words(config, store):
+    """Live (Qwen3.5-4B on vLLM, preferences said the way people say them: "I
+    avoid ...", "I'm not a fan of ..."): said as the opening message of a
+    conversation, none was read at all (the opening message is the task, and
+    it does not start like a rule); said after an answer, one became "Verify
+    user constraints before recommending content.", read as fitting one kind
+    of task, and never reached the prompt."""
+    from songe import quick
+    from songe.practice.store import wanted
+
+    said = "I avoid dairy because it upsets my stomach."
+    record_chat(store, (f"{said} What can I cook tonight?", "Try a lentil curry."))
+    reader = Judge(about_me={said})
+    assert read(store, reader) == 1
+    # The model saw the sentence in its message, and that nothing came before.
+    (question,) = reader.questions
+    assert "What can I cook tonight?" in question and "(nothing: this is the first message)" in question
+    (signal,) = [s for s in reading.signals(store) if s.get("preference")]
+    assert (signal["text"], signal["lesson"], signal["short"], signal["generality"]) == (said, said, said, "always")
+    # It points at the answer it got, so a Deep Dream practises it too.
+    assert signal["exchanges"] and signal["id"] in {s["id"] for s, _ in wanted(store, 1)}
+    # In the prompt at once, word for word, and it stays there.
+    for _ in range(2):
+        quick.quick_dream(store, config)
+        assert [lesson["text"] for lesson in quick.active(store)] == [said]
+    # A capture today's pattern would not make again leaves the prompt.
+    assert not quick.suitable(signal | {"preference": "Fix it now."})
+
+
+def test_a_preference_said_after_an_answer_is_published_as_the_user_said_it(config, store):
+    from songe import quick
+
+    said = "I'm allergic to peanuts."
+    record_chat(store, ("Suggest a snack.", "Peanut butter on toast."), (f"{said} Anything else works.", "Apple slices."))
+    assert read(store, Judge(about_me={said})) == 1
+    # One signal: the model's reading of the message, which now carries the sentence.
+    (signal,) = [s for s in reading.signals(store) if s["source"] == "user"]
+    assert signal["preference"] == said and signal["lesson"].startswith("Check which file")
+    quick.quick_dream(store, config)
+    assert [lesson["text"] for lesson in quick.active(store)] == [said]
+
+
+def test_not_every_sentence_in_the_first_person_is_a_preference(config, store):
+    from songe import quick
+    from songe.reading.rules import preference_sentences
+
+    # Candidates, in the user's words. A statement that runs into a question,
+    # or into a request (Chinese joins clauses with commas), is cut from it.
+    assert preference_sentences("I'm vegetarian, what should I cook tonight?") == ["I'm vegetarian"]
+    assert preference_sentences("As a vegan, I skip honey too.") == ["As a vegan, I skip honey too."]
+    assert preference_sentences("我不吃辣。") == ["我不吃辣"]
+    assert preference_sentences("我对花生过敏，推荐点别的") == ["我对花生过敏"]
+    assert preference_sentences("I avoid three things: gluten, dairy and soy.") == ["I avoid three things: gluten, dairy and soy."]
+    # Never candidates: a pick among things just offered, a wish about this
+    # answer, a fact of the task, a question, a text handed over to be worked
+    # on, somebody's line.
+    for text in (
+        "I prefer the second one.", "I like this version better.", "我喜欢第二个", "我更喜欢这个",
+        "Shorter please.", "I'm using Python 3.9 here.", "Do I always need a virtual environment?",
+        "我总是需要虚拟环境吗？",
+        "Correct the grammar: I enjoy listening to jazz. I never miss a concert in my town.",
+        "帮我润色：我从小喜欢画画，我总是随身带着速写本。",
+        'Mira: "Oh, I never eat before a show. I love the quiet of an empty hall."',
+    ):
+        assert preference_sentences(text) == [], text
+    # What a pattern cannot tell apart, the model judges where it stands: a
+    # word on the last answer and a line about the job are not kept.
+    record_chat(
+        store,
+        ("Draw me a landing page.", "Here is a page with a wide hero image."),
+        ("I love the new layout. I only get a blank page on my phone though.", "Fixed."),
+    )
+    reader = Judge()
+    assert read(store, reader) == 1
+    assert len(reader.questions) == 2 and all("wide hero image" in q for q in reader.questions)
+    assert not [s for s in reading.signals(store) if s.get("preference")]
+    quick.quick_dream(store, config)
+    assert quick.active(store) == []

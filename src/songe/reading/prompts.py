@@ -59,6 +59,12 @@ RESPONSIBLE_SCHEMA = {
     "required": ["steps", "reason"],
 }
 
+PREFERENCE_SCHEMA = {
+    "type": "object",
+    "properties": {"kind": {"type": "string", "enum": ["about_me", "reaction", "task", "text"]}},
+    "required": ["kind"],
+}
+
 LESSON_SCHEMA = {
     "type": "object",
     "properties": {
@@ -186,6 +192,30 @@ The feedback is the user's own words. If it tells the agent how this user wants 
     "<THING> please." -> "Use <THING>." or "Write <THING>."
     "You forgot <THING>." -> "Always include <THING>."
   - generality is "always" for such a wish, unless the user limited it to this one task."""
+
+# Asked about a sentence the rules flagged as a possible preference of the
+# user's own (rules.preference_sentences). Only "about_me" is kept. The other
+# three are what such a sentence turned out to be in real chats: a pick among
+# offers or a word on the last answer ("I love the new layout"), a line about
+# the job ("I only get three results"), a line of a text handed over to be
+# worked on (a cover letter or an essay in the first person).
+PREFERENCE = """A user is talking with an AI assistant.
+
+What the assistant said just before (nothing at the start of a conversation):
+{before}
+
+The user's message:
+{message}
+
+One sentence of that message:
+{sentence}
+
+What is this sentence? Choose one:
+- "about_me": the user tells the assistant something lasting about themself: what they like or dislike, what they avoid or cannot have, what they need, what they always or never do. It would still be true in another conversation next month.
+- "reaction": the user reacts to what the assistant just said or made, or picks among things it offered.
+- "task": the user describes the job at hand: what they want now, what they are working on, what happened, an error, a result.
+- "text": the user is not speaking as themself here. The sentence belongs to a text they hand over to be worked on (to translate, correct, rewrite, answer, continue): a letter, an email, an essay, a story, a post, another chatbot's reply. Or it is the line of a character in a role-play or a dialogue, or the words of another person.
+Answer with JSON only."""
 
 # The prompt's own example lessons: a lesson that repeats one of them was
 # copied, not written (live: Granite 3B on LM Studio gave all 9 signals the

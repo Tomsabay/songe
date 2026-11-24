@@ -24,7 +24,13 @@ import time
 import unicodedata
 
 from .reading import store as reading
-from .reading.rules import DEICTIC, RULE_START, SENTENCES, rule_sentence  # noqa: F401
+from .reading.rules import (  # noqa: F401
+    DEICTIC,
+    RULE_START,
+    SENTENCES,
+    rule_sentence,
+    stated_sentence,
+)
 from .steps import digest
 
 KEY = "prompt_lessons"
@@ -90,7 +96,13 @@ def suitable(signal):
     words (a sentence of theirs shaped like a rule). Other feedback (a
     reaction in a game, a one-off correction) waits for Deep Dream."""
     lesson = (signal.get("lesson") or "").strip()
-    if not lesson or signal.get("generality") == "task":
+    if not lesson:
+        return False
+    if signal.get("preference"):
+        # A preference of the user's own, in their words: it holds whatever
+        # the lesson written beside it was read as.
+        return stated_sentence(signal) is not None
+    if signal.get("generality") == "task":
         return False
     if signal.get("from") == "rules" and signal.get("source") == "user":
         # A stated rule captured by an older Songe is checked again by today's
@@ -109,7 +121,7 @@ def candidates(store, limit, min_sessions=2):
     clusters = []
     # Newest first: a cluster is named by its most recent wording.
     for s in sorted(signals, key=lambda s: s.get("revision") or 0, reverse=True):
-        rule = rule_sentence(s.get("text")) if s.get("type") in USER else None
+        rule = stated_sentence(s) if s.get("type") in USER else None
         # The short form reading wrote for the prompt, when it has one (signals
         # read before it existed fall back to the lesson, trimmed by tidy).
         text = rule or short_of(s) or s["lesson"].strip()
@@ -300,7 +312,7 @@ def user_rule(by_id, signal_ids):
     The most recent such sentence, or None."""
     for sid in signal_ids:
         s = by_id.get(sid) or {}
-        if s.get("type") in USER and (sentence := rule_sentence(s.get("text"))):
+        if s.get("type") in USER and (sentence := stated_sentence(s)):
             return sentence
     return None
 
@@ -322,7 +334,11 @@ def split(store, clusters):
         if ECHO.search(lesson["text"]):
             return False
         if lesson.get("rule"):
-            return rule_sentence(lesson["text"]) == lesson["text"]
+            # The user's own sentence: a standing rule, or a preference of
+            # theirs that one of its signals still holds.
+            return rule_sentence(lesson["text"]) == lesson["text"] or any(
+                stated_sentence(by_id[sid]) == lesson["text"] for sid in lesson["signals"] if sid in by_id
+            )
         return any(suitable(by_id[sid]) for sid in lesson["signals"] if sid in by_id)
 
     published = [dict(lesson, signals=list(lesson["signals"])) for lesson in active(store) if still_belongs(lesson)]

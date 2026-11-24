@@ -395,6 +395,30 @@ class Session:
         return self.signals
 
 
+async def stated_preferences(items, model):
+    """(item index, sentence) for each sentence the rules flag as a possible
+    preference of the user's own and the model judges to be one, in any user
+    message, the opening one included."""
+    from .rules import preference_sentences
+    from .timeline import clip
+
+    out, said = [], "(nothing: this is the first message)"
+    for i, it in enumerate(items):
+        if it.get("kind") == "action" and str(it.get("text") or "").strip():
+            said = clip(it["text"], 600)
+        if it.get("kind") != "user":
+            continue
+        for sentence in preference_sentences(it.get("content")):
+            answer = await model.ask(
+                P.PREFERENCE.format(before=said, message=clip(it["content"], 1200), sentence=sentence),
+                P.PREFERENCE_SCHEMA,
+                "preference",
+            )
+            if answer.get("kind") == "about_me":
+                out.append((i, sentence))
+    return out
+
+
 async def read_session(session, items, rows, model):
     """All signals of one session: the model's, then the rules' successes,
     confirmed or contradicted by the model's reading of each user reply."""
@@ -456,6 +480,48 @@ async def read_session(session, items, rows, model):
                 "item": item,
                 "text": sentence,
                 "from": "rules",
+                "lesson": sentence,
+                "short": sentence,
+                "generality": "always",
+                "evidence_steps": [about["step"]] if about and about.get("step") else [],
+                "placed": True,
+            }
+        )
+    # A preference the user states about themself ("I avoid dairy.") is kept in
+    # their words too, wherever it stands: the model's own lesson for such a
+    # message, if any, turned it into a procedure and lost what they named
+    # (live, Qwen3.5-4B: "Always check for user constraints before recommending
+    # content."), and an opening message is read by nobody else.
+    for item, sentence in await stated_preferences(items, model):
+        if sentence in have:
+            continue
+        have.add(sentence)
+        holder = next(
+            (
+                s
+                for s in found
+                if s.get("source") == "user" and s.get("item") == item and s.get("lesson")
+                and sentence in " ".join(str(s.get("text") or "").split())
+            ),
+            None,
+        )
+        if holder:
+            holder["preference"] = sentence  # its lesson stays for practice; the prompt gets the sentence
+            continue
+        # Practice and before/after start at the step the sentence is about;
+        # with nothing before it, at the answer it got.
+        about = reacted_action(items[:item], sentence) or next(
+            (it for it in items[item:] if it.get("kind") == "action" and it.get("exchange")), None
+        )
+        found.append(
+            {
+                "session": session,
+                "source": "user",
+                "type": "correction",
+                "item": item,
+                "text": sentence,
+                "from": "rules",
+                "preference": sentence,
                 "lesson": sentence,
                 "short": sentence,
                 "generality": "always",

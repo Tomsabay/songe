@@ -107,6 +107,15 @@ or by auto-dream:
   only means the user's own words: kept verbatim and ranked first. A stated
   rule points at the step it is about, so a Deep Dream practises it like any
   other lesson and, once adopted, it leaves the prompt.
+- A preference the user states about themself ("I avoid dairy.", "我不吃辣")
+  is kept the same way: their sentence, word for word, in the prompt at once.
+  It counts wherever it stands, the opening message included. Rules find the
+  candidates (`rules.preference_sentences`: first person, a word of taste,
+  habit or need, not a question, not a pick among things just offered); the
+  served model is asked one question per candidate (`preference`) and only
+  "about_me" is kept, not a reaction to the last answer, a line about the job,
+  or a line of a text handed over to be worked on. It points at the step it is
+  about, or at the answer it got when nothing came before.
 - Deep Dream (2–3 hours, skills): reads what is left, writes practice, trains,
   checks. When one is adopted, the lessons whose signals it trained leave the
   prompt (`quick.absorb`); an undo lets them come back.
