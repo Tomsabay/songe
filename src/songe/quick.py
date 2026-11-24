@@ -10,13 +10,18 @@ Which lessons: those read as applying to any task ("always": standing
 preferences, tool facts) and every lesson from the user's own feedback
 (corrections, retries, approvals), whatever its label: the generality label
 is noisy (27 of 43 on the answer key) and preferences come from the user.
-Skill lessons from tool results wait for Deep Dream. Near-duplicates are one
-lesson; the most recurrent, then the most recent, come first; at most
-config.prompt_lessons. A lesson the user removed never returns.
+Skill lessons from tool results wait for Deep Dream, with one exception: a
+skill learned from the results of one of the agent's own tools (a function or
+MCP tool, not a shell or a file tool) is published for that tool, and the
+proxy adds it only to sessions that offer the tool (tool_of). Near-duplicates
+are one lesson; the most recurrent, then the most recent, come first; at most
+config.prompt_lessons, and TOOL_LESSONS per tool. A lesson the user removed
+never returns.
 
 State per learner (store scoped to the model), key "prompt_lessons":
 {"version": n, "updated_at": t, "lessons": [Lesson], "removed": [text]}
-Lesson: {"id", "text", "signals": [signal ids], "added_at", "count"}
+Lesson: {"id", "text", "signals": [signal ids], "added_at", "count"}, and
+"tool": name on a lesson that belongs to one tool
 """
 
 import re
@@ -31,6 +36,7 @@ from .reading.rules import (  # noqa: F401
     rule_sentence,
     stated_sentence,
 )
+from .reading.views import COMMAND_OUTPUT, reviewed
 from .steps import digest
 
 KEY = "prompt_lessons"
@@ -82,6 +88,28 @@ def similar(a, b):
     return bool(x and y) and len(x & y) / len(x | y) >= SIMILAR
 
 
+# Lessons that belong to one tool: how many a session offering it is given,
+# and within how many characters (beside the lessons every session gets).
+TOOL_LESSONS = 5
+TOOL_CHARS = 400
+TOOL_BLOCK = "Lessons from earlier sessions that used the {tool} tool. Follow them when you use it:"
+
+
+def tool_of(signal):
+    """The tool a skill lesson belongs to, or None.
+
+    A lesson read as fitting one kind of task ("kind") stays out of the
+    prompt, because the prompt goes to every task. When it came from the
+    result of one of the agent's own tools, the tool says where it applies:
+    sessions that offer the same tool are tasks of that kind. Shell commands,
+    fetched pages and file tools serve every kind of task, so a lesson from
+    their results is not tied to them and waits for Deep Dream as before."""
+    if signal.get("source") != "tool" or signal.get("generality") != "kind":
+        return None
+    tool = signal.get("tool")
+    return tool if tool and reviewed(tool) and tool not in COMMAND_OUTPUT else None
+
+
 def state(store):
     return store.get(KEY) or {"version": 0, "updated_at": None, "lessons": [], "removed": []}
 
@@ -108,7 +136,7 @@ def suitable(signal):
         # A stated rule captured by an older Songe is checked again by today's
         # rule check, so a looser past capture does not stay in the prompt.
         return rule_sentence(signal.get("text")) is not None
-    if signal.get("generality") == "always":
+    if signal.get("generality") == "always" or tool_of(signal):
         return True
     return signal.get("type") in USER and rule_sentence(signal.get("text")) is not None
 
@@ -127,23 +155,32 @@ def candidates(store, limit, min_sessions=2):
         text = rule or short_of(s) or s["lesson"].strip()
         if any(similar(text, r) for r in removed):
             continue
+        tool = None if rule else tool_of(s)
         if rule:
             # A rule the user stated groups only with the same sentence of
             # theirs, never with lessons that merely look alike.
             home = next((c for c in clusters if c.get("rule") and normal(c["text"]) == normal(rule)), None)
         else:
-            home = next((c for c in clusters if not c.get("rule") and similar(text, c["text"])), None)
+            # A tool's lessons group among themselves.
+            home = next((c for c in clusters if not c.get("rule") and c.get("tool") == tool
+                         and similar(text, c["text"])), None)
         if home:
             home["signals"].append(s["id"])
         else:
             clusters.append({"text": text, "signals": [s["id"]], "newest": s.get("revision") or 0,
-                             "rule": bool(rule)})
+                             "rule": bool(rule), "tool": tool})
     # A tool fact or standing preference read as "always" enters the prompt
     # once it has come up in two conversations; a rule the user stated, at once.
     sessions = {s["id"]: s.get("session") for s in signals}
     clusters = [c for c in clusters if c.get("rule") or len({sessions.get(i) for i in c["signals"]}) >= min_sessions]
     clusters.sort(key=lambda c: (-len(c["signals"]), -c["newest"]))
-    return clusters[:limit]
+    # The limit counts the lessons for every session; each tool has its own.
+    kept, taken = [], {}
+    for c in clusters:
+        taken[c["tool"]] = taken.get(c["tool"], 0) + 1
+        if taken[c["tool"]] <= limit:
+            kept.append(c)
+    return kept
 
 
 CONSOLIDATE = """These are lessons a coding assistant learned from one user's feedback and from its own tool errors (numbered, most frequent first):
@@ -349,7 +386,8 @@ def split(store, clusters):
     for c in clusters:
         home = next((lesson for lesson in published if set(lesson["signals"]) & set(c["signals"])
                      or (normal(c["text"]) == normal(lesson["text"]) if c.get("rule")
-                         else not lesson.get("rule") and similar(c["text"], lesson["text"]))), None)
+                         else not lesson.get("rule") and lesson.get("tool") == c.get("tool")
+                         and similar(c["text"], lesson["text"]))), None)
         if home:
             home["signals"] = list(dict.fromkeys(home["signals"] + c["signals"]))
         else:
@@ -384,11 +422,11 @@ def quick_dream(store, config, now=None, merged=None, kept=None):
         rule = c["text"] if c.get("rule") else user_rule(by_id, c["signals"])
         text = rule or tidy(c["text"])
         pool.append({"text": text[:LESSON_CHARS].rstrip(), "signals": c["signals"],
-                     "count": len(c["signals"]), "rule": bool(rule)})
+                     "count": len(c["signals"]), "rule": bool(rule), "tool": None if rule else c.get("tool")})
     # One lesson per sentence: the same text twice is one lesson.
     unique = {}
     for lesson in pool:
-        key = normal(lesson["text"]) or " ".join(lesson["text"].split()).lower()
+        key = (lesson.get("tool"), normal(lesson["text"]) or " ".join(lesson["text"].split()).lower())
         if key in unique:
             first = unique[key]
             first["signals"] = list(dict.fromkeys(first["signals"] + lesson["signals"]))
@@ -400,12 +438,17 @@ def quick_dream(store, config, now=None, merged=None, kept=None):
     # The user's own rules first, then the most recurrent, before the cut;
     # published ones win a tie.
     pool.sort(key=lambda lesson: (not lesson.get("rule"), -lesson["count"]))
-    lessons, used, taken = [], 0, set()
-    for c in pool[: config.prompt_lessons]:
-        text = c["text"]
-        if used + len(text) > PROMPT_CHARS and lessons:
+    # The lessons for every session first, then each tool's own, each within
+    # its own number and length.
+    budgets = {None: (config.prompt_lessons, PROMPT_CHARS)}
+    lessons, used, count, taken = [], {}, {}, set()
+    for c in sorted(pool, key=lambda lesson: lesson.get("tool") is not None):
+        text, tool = c["text"], c.get("tool")
+        most, chars = budgets.get(tool, (TOOL_LESSONS, TOOL_CHARS))
+        count[tool] = count.get(tool, 0) + 1
+        if count[tool] > most or (used.get(tool, 0) + len(text) > chars and used.get(tool)):
             continue
-        used += len(text)
+        used[tool] = used.get(tool, 0) + len(text)
         old = c if c.get("id") else next((lesson for lesson in current["lessons"] if lesson["id"] not in taken
                                          and (similar(text, lesson["text"])
                                               or set(lesson["signals"]) & set(c["signals"]))), None)
@@ -419,6 +462,7 @@ def quick_dream(store, config, now=None, merged=None, kept=None):
                 "count": len(c["signals"]),
                 "added_at": old["added_at"] if old else now,
                 "rule": bool(c.get("rule")),
+                **({"tool": tool} if tool else {}),
             }
         )
     added = sum(1 for lesson in lessons if lesson["added_at"] == now)
@@ -557,11 +601,22 @@ def waiting(store, limit=50):
     return {"total": len(groups), "lessons": groups[:limit]}
 
 
-def block(lessons):
-    """The text added to the system message."""
-    if not lessons:
-        return ""
-    return "\n".join([BLOCK, *(f"- {lesson['text']}" for lesson in lessons)])
+def tool_names(tools):
+    """The names of a request's tools (its "tools" field)."""
+    return [t["function"].get("name") for t in tools or []
+            if isinstance(t, dict) and isinstance(t.get("function"), dict)]
+
+
+def block(lessons, tools=()):
+    """The text added to the system message: the lessons for every session,
+    then those of each tool this session offers (tools: their names)."""
+    general = [lesson for lesson in lessons if not lesson.get("tool")]
+    lines = [BLOCK, *(f"- {lesson['text']}" for lesson in general)] if general else []
+    offered = set(tools or ())
+    for tool in dict.fromkeys(lesson["tool"] for lesson in lessons if lesson.get("tool") in offered):
+        lines += [TOOL_BLOCK.format(tool=tool),
+                  *(f"- {lesson['text']}" for lesson in lessons if lesson.get("tool") == tool)]
+    return "\n".join(lines)
 
 
 # ---- Before and after: what a new preference changes ----------------------

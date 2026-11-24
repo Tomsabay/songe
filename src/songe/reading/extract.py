@@ -163,6 +163,10 @@ class Session:
             "text": text[:1500],
             "task_start": first_step_after(self.items, self.task_start(item) + 1),
         }
+        if source == "tool" and self.items[item]["kind"] == "tool_result":
+            # Whose result this was: a Quick Dream gives a lesson about one of
+            # the agent's own tools to the sessions that offer it (quick.tool_of).
+            signal["tool"] = self.items[item].get("tool")
         before = set(steps_after(self.items, self.task_start(item), item + 1))
         if source == "user" and self.items[item]["kind"] == "user":
             before = set(steps_after(self.items, self.task_start(item), item))

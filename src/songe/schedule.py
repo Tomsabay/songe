@@ -2780,7 +2780,7 @@ class ModelScheduler(Scheduler):
         finally:
             if own:
                 await reader.close()
-        before_block = quick.block(quick.active(learner))
+        before = quick.active(learner)
         result = await asyncio.to_thread(
             quick.quick_dream, learner, config, None, fresh if merged is None else merged, kept
         )
@@ -2792,7 +2792,7 @@ class ModelScheduler(Scheduler):
         examples = []
         if changes["added"]:
             try:
-                examples = await self.quick_examples(model, before_block, changes["added"])
+                examples = await self.quick_examples(model, before, changes["added"])
             except Exception as exc:  # Examples illustrate; the prompt stands.
                 logger.warning("quick_examples_failed %s: %s", model, exc)
         await asyncio.to_thread(quick.record, learner, result | {"changes": changes}, at, examples)
@@ -2800,7 +2800,7 @@ class ModelScheduler(Scheduler):
             learner.event("quick", f"{result['added']} new lessons in the prompt")
         return result
 
-    async def quick_examples(self, model, before_block, added):
+    async def quick_examples(self, model, before, added):
         """Before and after for up to quick.EXAMPLES new preferences: the
         moment each came from, answered by the served model with the lessons
         from before this Quick Dream and with the new ones. None of this goes
@@ -2820,8 +2820,8 @@ class ModelScheduler(Scheduler):
         activity = (getattr(self, "reading_activity", None) or {}).get(model)
         if activity is not None:
             activity["stage"] = "compare"
-        after_block = quick.block(quick.active(learner))
-        lessons = {lesson["text"]: lesson for lesson in quick.active(learner)}
+        after = quick.active(learner)
+        lessons = {lesson["text"]: lesson for lesson in after}
         out = []
         async with httpx.AsyncClient(timeout=180, trust_env=False) as client:
             # Every new preference, rules or not, is replayed at the moment it
@@ -2837,15 +2837,19 @@ class ModelScheduler(Scheduler):
                     logger.info("quick_example_no_moment %s: %s", model, text[:80])
                     continue
                 (url, served), server = self.serving_endpoint(version, identifier), self.installation_config.upstream
-                before, after, differs = await quick.compare(
-                    client, url, served, found["request"], before_block, after_block, server=server,
+                # The lessons this request's session gets: a tool's lessons
+                # only where the tool is offered.
+                offered = quick.tool_names(found["request"].get("tools"))
+                was, now, differs = await quick.compare(
+                    client, url, served, found["request"],
+                    quick.block(before, offered), quick.block(after, offered), server=server,
                 )
-                verdict = await quick.judge(client, url, served, text, before, after, server=server) if differs else None
+                verdict = await quick.judge(client, url, served, text, was, now, server=server) if differs else None
                 changed = differs and verdict == "after"
                 shown += changed
                 logger.info("quick_example %s: differs=%s verdict=%s %s", model, differs, verdict, text[:60])
                 out.append({"lesson": text, "asked": found["asked"], "feedback": found["feedback"],
-                            "said_by": found.get("said_by", "user"), "before": before, "after": after,
+                            "said_by": found.get("said_by", "user"), "before": was, "after": now,
                             "changed": changed, "differs": differs, "verdict": verdict})
         return out
 

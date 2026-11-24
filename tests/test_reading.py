@@ -1075,6 +1075,7 @@ def test_the_results_of_an_agents_own_tools_are_reviewed(store):
     assert "aback" not in question  # a file read is not a result to review
     (signal,) = [s for s in reading.signals(store) if s["source"] == "tool"]
     assert signal["type"] == "failed_result" and "not an English word" in signal["text"]
+    assert signal["tool"] == "guess"  # whose result it was (a Quick Dream publishes it for that tool)
     # Shell commands: the question that was checked against the answer key.
     shell = [
         {"kind": "user", "content": "run it"},

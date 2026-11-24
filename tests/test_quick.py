@@ -12,11 +12,12 @@ def one_session_is_enough(config):
     config.quick_min_sessions = 1
 
 
-def add_signal(store, sid, lesson, *, kind="correction", generality="kind", revision=1, text=None):
+def add_signal(store, sid, lesson, *, kind="correction", generality="kind", revision=1, text=None, tool=None):
     # The user's words: by default the lesson itself, as a stated rule.
     text = lesson if text is None and kind in quick.USER else text or ""
     payload = {"id": sid, "session": "s", "type": kind, "source": "user" if kind in quick.USER else "tool",
-               "lesson": lesson, "generality": generality, "revision": revision, "text": text}
+               "lesson": lesson, "generality": generality, "revision": revision, "text": text,
+               **({"tool": tool} if tool else {})}
     with store.connect() as db:
         db.execute("INSERT INTO signals VALUES (?,?,?,?,?,NULL)",
                    (sid, store.model_id, "s", revision, json.dumps(payload)))
@@ -849,3 +850,81 @@ def test_ten_sentences_in_the_users_own_words_fit_the_list(config, store):
     quick.quick_dream(store, config)
     assert len(quick.active(store)) == 10
 
+
+def test_a_skill_learned_from_a_tools_results_goes_to_sessions_that_offer_the_tool(config, store):
+    """Live (Qwen3.5-9B on vLLM, a word game played through a function tool
+    named guess): every lesson about the game was read as fitting one kind of
+    task, so none reached the prompt and the next game began with nothing
+    learned. A skill lesson stays out of the prompt because the prompt goes to
+    every task; the tool it came from says where it applies. Lessons from the
+    results of one of the agent's own tools are published for that tool and
+    added only to sessions that offer it. Shell commands serve every kind of
+    task: their skill lessons wait for Deep Dream as before."""
+    add_signal(store, "c1", "Always use Conventional Commits for commit messages.", revision=1)
+    add_signal(store, "g1", "Never guess a word that was already guessed.", kind="failed_result", tool="guess", revision=2)
+    add_signal(store, "g2", "Never guess a word that was guessed already.", kind="failed_result", tool="guess", revision=3)
+    add_signal(store, "g3", "Keep letters marked G in their place.", kind="outcome", tool="guess", revision=4)
+    add_signal(store, "b1", "In Wordle keep letters marked G in place.", kind="outcome", tool="bash", revision=5)
+    add_signal(store, "k1", "Run the entry points after a rename.", kind="failed_result", revision=6)
+    quick.quick_dream(store, config, now=100.0)
+    lessons = quick.active(store)
+    assert [(lesson.get("tool"), lesson["count"]) for lesson in lessons] == [(None, 1), ("guess", 2), ("guess", 1)]
+    every = quick.block(lessons)
+    assert "Conventional Commits" in every and "guess" not in every
+    assert quick.block(lessons, ["bash", "read"]) == every
+    game = quick.block(lessons, ["guess"])
+    assert game.startswith(every + "\n" + quick.TOOL_BLOCK.format(tool="guess") + "\n- ")
+    assert "already" in game and "marked G in their place" in game and "Wordle" not in game
+    # In the prompt of its sessions, so no longer only waiting for a Deep Dream.
+    assert {w["text"] for w in quick.waiting(store)["lessons"]} == {
+        "In Wordle keep letters marked G in place.", "Run the entry points after a rename."}
+    # A tool has its own small budget; the lessons for every session keep theirs.
+    for i in range(8):
+        add_signal(store, f"n{i}", f"Open with word number {i}: {'alpha beta gamma delta'.split()[i % 4]} {i * 7}.",
+                   kind="outcome", tool="guess", revision=10 + i)
+    quick.quick_dream(store, config, now=200.0)
+    lessons = quick.active(store)
+    assert sum(1 for lesson in lessons if lesson.get("tool") == "guess") == quick.TOOL_LESSONS
+    assert [lesson["text"] for lesson in lessons if not lesson.get("tool")] == [
+        "Always use Conventional Commits for commit messages."]
+    # Without lessons for every session, the tool's block stands alone.
+    only = [lesson for lesson in lessons if lesson.get("tool")]
+    assert quick.block(only) == "" and quick.block(only, ["guess"]).startswith(quick.TOOL_BLOCK.format(tool="guess"))
+
+
+async def test_the_proxy_adds_a_tools_lessons_where_the_tool_is_offered(config, store):
+    import httpx
+
+    from tests.test_proxy import Chunks, pair, version
+
+    seen = []
+    reply = json.dumps({"id": "x", "model": "night-1", "choices": [
+        {"index": 0, "message": {"role": "assistant", "content": "ok"}, "finish_reason": "stop"}]}).encode()
+
+    async def handler(request):
+        seen.append(request)
+        return httpx.Response(200, stream=Chunks([reply]), headers={"content-type": "application/json"})
+
+    store.add_version(version("night-1", 1))
+    store.swap("night-1", None)
+    add_signal(store, "g1", "Never guess a word that was already guessed.", kind="failed_result", tool="guess")
+    quick.quick_dream(store, config)
+    app, upstream = await pair(config, store, handler)
+    guess = {"type": "function", "function": {"name": "guess", "parameters": {"type": "object", "properties": {}}}}
+
+    def chat(first, tools=None):
+        return {"model": "songe/test", "messages": [{"role": "system", "content": "You are an agent."},
+                                                    {"role": "user", "content": first}],
+                **({"tools": tools} if tools else {})}
+
+    async with (
+        app.router.lifespan_context(app),
+        httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://127.0.0.1") as client,
+    ):
+        await client.post("/v1/chat/completions", json=chat("Game 1.", [guess]), headers={"x-session-affinity": "a"})
+        await client.post("/v1/chat/completions", json=chat("Rename a function."), headers={"x-session-affinity": "b"})
+    await upstream.aclose()
+    system = [json.loads(r.content)["messages"][0]["content"] for r in seen]
+    assert system[0] == ("You are an agent.\n\n" + quick.TOOL_BLOCK.format(tool="guess")
+                         + "\n- Never guess a word that was already guessed.")
+    assert system[1] == "You are an agent."

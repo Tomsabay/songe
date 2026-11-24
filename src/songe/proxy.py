@@ -78,7 +78,9 @@ class LessonPins:
 
         return digest([learner.model_key, first("system"), first("user")])
 
-    def block_for(self, learner, messages, session_id=None):
+    def block_for(self, learner, messages, session_id=None, tools=None):
+        """tools: the request's tool definitions; lessons that belong to one
+        tool are for sessions that offer it."""
         from . import quick
 
         if not isinstance(messages, list) or not messages:
@@ -87,7 +89,7 @@ class LessonPins:
         if key in self.pins:
             self.pins.move_to_end(key)
             return self.pins[key]
-        text = quick.block(quick.active(learner))
+        text = quick.block(quick.active(learner), quick.tool_names(tools))
         self.pins[key] = text
         if len(self.pins) > self.size:
             self.pins.popitem(last=False)
@@ -483,6 +485,7 @@ def create_app(config=None, store=None, client=None, scheduler=None):
                         learner,
                         mapped.get("messages"),
                         request.headers.get("x-session-affinity"),
+                        mapped.get("tools"),
                     )
                     if text:
                         mapped["messages"] = with_lessons(mapped["messages"], text)
