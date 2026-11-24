@@ -725,6 +725,40 @@ def test_a_copied_example_is_no_lesson_and_conditional_rules_are_rules():
     assert rule_sentence("Use the feedback from each guess.") is None
 
 
+def test_the_lesson_question_for_the_users_own_words_keeps_what_they_named(store):
+    """Live (Qwen3.5-4B on vLLM, 24 chats corrected in everyday words): "I use
+    uv, not pip." was stored as "Verify the user's preferred package manager
+    before providing instructions.", "In metric please." as "Check the user's
+    preferred units before providing the final answer." read as fitting one
+    kind of task, and no answer changed. The question now says that a wish in
+    the user's own words is the lesson; a tool's result is asked about as before."""
+    from songe.reading import prompts as P
+
+    class Recording(FakeReader):
+        def __init__(self):
+            super().__init__()
+            self.questions = []
+
+        async def ask(self, prompt, schema, name):
+            if name == "lesson":
+                self.questions.append(prompt)
+            return await super().ask(prompt, schema, name)
+
+    record_session(store, reply_text="pnpm please.")
+    reader = Recording()
+    assert read(store, reader) == 1
+    (question,) = [q for q in reader.questions if "pnpm please." in q]
+    assert P.USER_WISH in question
+    assert "user's key words" in P.USER_WISH and '"always"' in P.USER_WISH
+    # Feedback from a tool is not the user's words: that question is unchanged.
+    plain = P.LESSON.format(task="t", steps="s", feedback="Exit code: 1", reason="r", after="a", wish="")
+    assert P.USER_WISH not in plain and "{wish}" not in plain
+    assert all(P.USER_WISH not in q for q in reader.questions if "pnpm please." not in q)
+    # A shape pasted back with its placeholders is no lesson; a real wish is one.
+    assert P.copied_example("Use <THING>, not <OTHER>.")
+    assert not P.copied_example("Use uv, not pip.")
+
+
 def test_a_rule_in_a_message_wrapped_in_quotes_keeps_no_quote():
     """Live (opencode 1.19.6, `opencode run "..."`): the message arrives inside
     quotes; the first rule was missed and the last became the preference

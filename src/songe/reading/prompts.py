@@ -157,7 +157,7 @@ Why these steps are responsible: {reason}
 What the agent did after the feedback:
 {after}
 
-Write what the agent should do differently next time.
+Write what the agent should do differently next time.{wish}
 - lesson: one or two sentences of advice that would also help on a different task of the same kind. Name the general practice; do not mention this task's files, function names or values.
   Good: "When renaming a function, search for every way it is used, including names built as strings, and run the program's entry points before saying it is done."
   Bad: "Update report.py to use circle_area."
@@ -171,6 +171,21 @@ Answer with JSON only."""
 
 
 
+# Added to the lesson question when the feedback is the user's own words. A
+# wish said in passing ("uv please", "in metric please") is a standing
+# preference, and the lesson must keep the thing the user named. Live
+# (Qwen3.5-4B, 24 chats corrected in everyday words): "I use uv, not pip." was
+# stored as "Verify the user's preferred package manager before providing
+# instructions." and no answer changed. Shapes with placeholders, not worked
+# examples: a worked example is copied (see EXAMPLE_LESSONS).
+USER_WISH = """
+The feedback is the user's own words. If it tells the agent how this user wants things (which tool, which format, which wording, which units, which style), that wish itself is the lesson, and the rule below about naming the general practice does not apply:
+  - lesson and short are the direct instruction and name exactly what the user named, in the user's words. The user's key words (the name of the tool, the unit, the phrase, the format) must appear in both, written out. Never replace them with their category ("the preferred tool", "the requested format") and never turn the wish into advice to check, verify or ask.
+    Shapes, where <THING> and <OTHER> stand for the user's own words:
+    "<THING>, not <OTHER>." -> "Use <THING>, not <OTHER>."
+    "<THING> please." -> "Use <THING>." or "Write <THING>."
+    "You forgot <THING>." -> "Always include <THING>."
+  - generality is "always" for such a wish, unless the user limited it to this one task."""
 
 # The prompt's own example lessons: a lesson that repeats one of them was
 # copied, not written (live: Granite 3B on LM Studio gave all 9 signals the
@@ -191,5 +206,7 @@ def copied_example(lesson):
     text = " ".join(str(lesson or "").lower().split())
     if not text:
         return False
+    if "<thing>" in text or "<other>" in text:
+        return True  # a shape of USER_WISH with its placeholders left in
     return any(difflib.SequenceMatcher(None, text, " ".join(e.lower().split())).ratio() > 0.8
                or text.startswith(" ".join(e.lower().split())[:50]) for e in EXAMPLE_LESSONS)

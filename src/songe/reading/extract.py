@@ -254,6 +254,8 @@ class Session:
                 feedback=self.short(text[:1500]) + about,
                 reason=signal["reason"],
                 after=self.after_view(item),
+                # The user's own words can hold a wish to keep as they said it.
+                wish=P.USER_WISH if source == "user" else "",
             ),
             P.LESSON_SCHEMA,
             "lesson",
