@@ -387,6 +387,14 @@ class Store:
                 "INSERT OR IGNORE INTO state VALUES ('candidate_generation',?)",
                 (json.dumps(str(uuid.uuid4())),),
             )
+            # The newest recording when the version that keeps a streamed
+            # answer's reasoning under either field name first opened this
+            # store. Streamed answers up to it may have lost theirs
+            # (sleep.prompts.served_switches does not read them as direct).
+            db.execute(
+                "INSERT OR IGNORE INTO state VALUES ('streamed_reasoning_from',"
+                " (SELECT CAST(COALESCE(MAX(id),0) AS TEXT) FROM exchanges))"
+            )
             if migrate_learning:
                 # Old candidates may contain history outside the new window.
                 for row in db.execute("SELECT id FROM models").fetchall():
