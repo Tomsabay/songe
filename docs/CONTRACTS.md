@@ -80,7 +80,9 @@ or by auto-dream:
   Dream teacher's note) and `short` (one instruction of at most 15 words, the
   prompt's form); Quick Dream uses `short`, and trims `lesson` by text only for
   signals read before `short` existed.
-  Published lessons keep their wording; near-duplicates as one,
+  Published lessons keep their wording; near-duplicates as one, and so are
+  notes reading found to be one wish said in other words (the place then
+  keeps each wording, see `same_notes` below),
   most recurrent then most recent first; the served model then consolidates
   them in one call (merges same-meaning lessons, drops ones that fit only one
   kind of task, rewrites each as one short instruction; the candidates as they
@@ -130,6 +132,18 @@ or by auto-dream:
   practice no longer see it, and it stays retired when its conversation is
   read again. The order conversations are read in does not matter; answers
   come from the reader's cache unless the list of earlier sentences changed.
+- People repeat themselves. Then each note for the prompt is shown to the
+  served model with the notes before it, oldest first (`same_note`: which of
+  them could be the same wish?), and each one it names again with it alone
+  (`same_wish`: the model says each note again as an instruction, then
+  "same" or "different"). A note that repeats an earlier one ("Celsius
+  please, I don't think in Fahrenheit." after "In metric please.") is folded
+  into it (`same_notes` in the learner's state: signal -> the first signal of
+  that wish). Folded notes are one lesson and take one place in the prompt,
+  which keeps each wording, the most recent first, as long as they fit in one
+  lesson; a change wanted once counts in every conversation it came up in,
+  however it was worded. No wording is chosen and no signal is retired, so a
+  wrong answer costs a place or shares one and never drops a note.
 - Every user message that follows an answer is judged once by the served
   model (`turn`, with thinking): a standing wish about how this user wants
   things, a change wanted for this answer only, new work, or a reaction. Only

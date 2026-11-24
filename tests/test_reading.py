@@ -1202,6 +1202,55 @@ def test_a_new_preference_retires_the_one_it_replaces(config, store):
     assert {lesson["text"] for lesson in quick.active(store)} == {other, new}
 
 
+class Repeating(Changing):
+    """Also asked which kept notes a new note could repeat (the numbers given
+    for it) and whether two notes are one wish (the pairs given are)."""
+
+    def __init__(self, about_me=(), same=None, one_wish=(), **changes):
+        super().__init__(about_me, **changes)
+        self.same, self.one_wish, self.listed, self.pairs = same or {}, set(one_wish), [], []
+
+    async def ask(self, prompt, schema, name):
+        if name == "same_note":
+            self.listed.append(prompt)
+            return {"same": self.same.get(prompt.split("A new note:\n", 1)[1].split("\n")[0], [])}
+        if name == "same_wish":
+            pair = (prompt.split("Note 1: ", 1)[1].split("\n")[0], prompt.split("Note 2: ", 1)[1].split("\n")[0])
+            self.pairs.append(pair)
+            return {"note_1_asks": pair[0], "note_2_asks": pair[1], "kind": "same" if pair in self.one_wish else "different"}
+        return await super().ask(prompt, schema, name)
+
+
+def test_a_preference_said_again_shares_one_place_and_a_changed_one_still_leaves(config, store):
+    """A preference said again in other words is not a change of mind and not
+    a second preference: both sentences stay, word for word, in one place.
+    A preference that replaces an earlier one still retires it, and that is
+    settled first: folding only sees what is still true of the user."""
+    from songe import quick
+    from songe.reading import prompts as P
+
+    dairy, again = "I avoid dairy.", "I avoid milk and cheese."
+    window, aisle = "I prefer window seats when I fly.", "I prefer aisle seats now."
+    record_chat(store, (f"{dairy} What can I cook tonight?", "A lentil curry."))
+    record_chat(store, (f"{window} Find me a flight to Oslo.", "The 9:40 has window seats."))
+    record_chat(store, (f"{again} Any dessert ideas?", "A fruit salad."))
+    record_chat(store, (f"{aisle} Find me a flight to Rome.", "The 7:15 has aisle seats."))
+    reader = Repeating(
+        about_me={dairy, again, window, aisle}, replaces={aisle: [2]}, not_both={(window, aisle)},
+        same={again: [1], aisle: [1]}, one_wish={(dairy, again)},
+    )
+    assert read(store, reader) == 4
+    assert [s["preference"] for s in reading.signals(store)] == [dairy, again, aisle]
+    # The retired sentence is not among the notes shown; the seat preference
+    # the model named for the dairy note is a different wish, and stays apart.
+    assert reader.listed == [P.SAME.format(notes=f"1. {dairy}", note=again), P.SAME.format(notes=f"1. {dairy}", note=aisle)]
+    assert reader.pairs == [(dairy, again), (dairy, aisle)]
+    quick.quick_dream(store, config)
+    lessons = {lesson["text"]: lesson for lesson in quick.active(store)}
+    assert set(lessons) == {f"{again} {dairy}", aisle}
+    assert lessons[f"{again} {dairy}"]["count"] == 2 and lessons[f"{again} {dairy}"]["rule"]
+
+
 def test_the_order_conversations_are_read_in_does_not_decide_which_preference_stays(config, store):
     from songe import quick
     from songe.reading import prompts as P
