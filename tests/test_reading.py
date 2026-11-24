@@ -1130,6 +1130,95 @@ def test_a_sentence_that_says_a_habit_changed_is_a_candidate(config, store):
     assert [lesson["text"] for lesson in quick.active(store)] == [said]
 
 
+class Changing(Judge):
+    """Also asked which earlier sentences a sentence replaces (answers with
+    the numbers given for it), and whether an earlier and a later sentence
+    can both be true (not for the pairs given). Keeps those questions."""
+
+    def __init__(self, about_me=(), replaces=None, not_both=()):
+        super().__init__(about_me)
+        self.replaces, self.not_both, self.compared, self.checked = replaces or {}, set(not_both), [], []
+
+    async def ask(self, prompt, schema, name):
+        if name == "replaces":
+            self.compared.append(prompt)
+            said = prompt.rsplit("What the user said after all of them:\n", 1)[1].split("\n")[0]
+            return {"replaces": self.replaces.get(said, [])}
+        if name == "both_true":
+            pair = (prompt.split("Earlier: ", 1)[1].split("\n")[0], prompt.split("Later: ", 1)[1].split("\n")[0])
+            self.checked.append(pair)
+            return {"kind": "later_only" if pair in self.not_both else "both"}
+        return await super().ask(prompt, schema, name)
+
+
+def test_a_new_preference_retires_the_one_it_replaces(config, store):
+    """Live (Qwen3.5-4B on vLLM; 20 people each state a preference and, in a
+    later conversation, say it has changed): the old sentence stayed in the
+    prompt every time, next to the new one where the new one was kept, and
+    nothing ever took it out. Now the model is asked, once for each
+    preference, which of the ones stated before it it replaces, then of each
+    one it names whether both can be true, and those that cannot are
+    retired. Live again: the old sentence left the prompt in 17 of the 18
+    cases; of 40 pairs of sentences that do not conflict all 80 stayed, and
+    so did all 200 sentences of 20 users who stated ten preferences each."""
+    from songe import quick
+    from songe.practice.store import wanted
+    from songe.reading import prompts as P
+
+    old, new, other = "I prefer window seats when I fly.", "I prefer aisle seats now.", "I avoid dairy."
+    first = [{"role": "user", "content": f"{old} Find me a flight to Oslo."}]
+    store.record("/v1/chat/completions", {"messages": first}, reply({"role": "assistant", "content": "The 9:40 has window seats."}))
+    store.reconstruct()
+    record_chat(store, (f"{other} What can I cook tonight?", "A lentil curry."))
+    # The model names a note that the sentence does not replace: asked again
+    # about that pair alone, it says both can be true, and both stay.
+    reader = Changing(about_me={old, new, other}, replaces={other: [1]})
+    assert read(store, reader) == 2
+    assert reader.compared == [P.REPLACES.format(notes=f"1. {old}", sentence=other)] and reader.checked == [(old, other)]
+    quick.quick_dream(store, config)
+    assert {lesson["text"] for lesson in quick.active(store)} == {old, other}
+
+    record_chat(store, (f"{new} Find me a flight to Rome.", "The 7:15 has aisle seats."))
+    reader = Changing(about_me={old, new, other}, replaces={new: [1, 2, 9, "2", True]}, not_both={(old, new)})
+    assert read(store, reader) == 1
+    asked = reader.compared
+    assert asked[-1] == P.REPLACES.format(notes=f"1. {old}\n2. {other}", sentence=new)
+    assert reader.checked == [(old, new), (other, new)]  # an answer that names no note is ignored
+    # The old sentence is retired: out of reading, out of practice, out of
+    # the prompt. The other one stays.
+    assert [s["preference"] for s in reading.signals(store)] == [other, new]
+    assert len(wanted(store, 1)) == 2
+    quick.quick_dream(store, config)
+    assert {lesson["text"] for lesson in quick.active(store)} == {other, new}
+    # Its conversation goes on and is read again: it stays retired, and the
+    # questions are the same ones (a real reader answers them from its cache).
+    more = first + [{"role": "assistant", "content": "The 9:40 has window seats."}, {"role": "user", "content": "Book it."}]
+    store.record("/v1/chat/completions", {"messages": more}, reply({"role": "assistant", "content": "Booked."}))
+    store.reconstruct()
+    reader = Changing(about_me={old, new, other})
+    assert read(store, reader) == 1 and reader.compared == asked
+    assert [s["preference"] for s in reading.signals(store) if s.get("preference")] == [other, new]
+    quick.quick_dream(store, config)
+    assert {lesson["text"] for lesson in quick.active(store)} == {other, new}
+
+
+def test_the_order_conversations_are_read_in_does_not_decide_which_preference_stays(config, store):
+    from songe import quick
+    from songe.reading import prompts as P
+
+    old, new = "I love coffee in the morning.", "I've given up coffee; I only drink tea now."
+    record_chat(store, (f"{old} Plan my breakfast.", "Coffee and toast."))
+    record_chat(store, (f"{new} Plan my breakfast.", "Tea and toast."))
+    # A backlog is read newest first. The sentences are compared in the order
+    # they were said: the later one is asked about the earlier one.
+    reader = Changing(about_me={old, new}, replaces={new: [1]}, not_both={(old, new)})
+    assert asyncio.run(reading.read(store, reader, newest=True)) == 2
+    assert reader.compared == [P.REPLACES.format(notes=f"1. {old}", sentence=new)]
+    assert [s["preference"] for s in reading.signals(store)] == [new]
+    quick.quick_dream(store, config)
+    assert [lesson["text"] for lesson in quick.active(store)] == [new]
+
+
 def test_the_results_of_an_agents_own_tools_are_reviewed(store):
     """Live (Qwen3.5-9B on vLLM, a word game played through a function tool
     named guess, 100 games): reading asked no review question and kept no

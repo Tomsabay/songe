@@ -65,6 +65,18 @@ PREFERENCE_SCHEMA = {
     "required": ["kind"],
 }
 
+REPLACES_SCHEMA = {
+    "type": "object",
+    "properties": {"replaces": {"type": "array", "items": {"type": "integer"}}},
+    "required": ["replaces"],
+}
+
+BOTH_TRUE_SCHEMA = {
+    "type": "object",
+    "properties": {"kind": {"type": "string", "enum": ["both", "later_only"]}},
+    "required": ["kind"],
+}
+
 LESSON_SCHEMA = {
     "type": "object",
     "properties": {
@@ -300,6 +312,40 @@ What is this sentence? Choose one:
 - "reaction": the user reacts to what the assistant just said or made, or picks among things it offered.
 - "task": the user describes the job at hand: what they want now, what they are working on, what happened, an error, a result.
 - "text": the user is not speaking as themself here. The sentence belongs to a text they hand over to be worked on (to translate, correct, rewrite, answer, continue): a letter, an email, an essay, a story, a post, another chatbot's reply. Or it is the line of a character in a role-play or a dialogue, or the words of another person.
+Answer with JSON only."""
+
+# Asked of each preference the user states about themself, with the ones they
+# stated before it (reading/store.retire_replaced): people change, and a note
+# that is no longer true must leave. Two questions, because one was not
+# enough (live, Qwen3.5-4B, thinking off): asked only which notes a sentence
+# replaces, the model named notes about other things for a sentence that
+# tells of a change ("I've quit soft drinks; I only drink water now." was
+# said to replace four notes about books, trams and food): 34 notes wrongly
+# retired among 480 sentences that replace nothing. Each note it names is
+# therefore shown again on its own with the new sentence (BOTH_TRUE), and
+# only "later_only" retires it: 2 in the same 480 (a sentence said twice in
+# other words, and two diets that do exclude each other), and 36 of 40 real
+# changes still found.
+REPLACES = """A user tells an AI assistant things about themself. The assistant keeps each as a note, in the user's words.
+
+Notes kept so far, oldest first:
+{notes}
+
+What the user said after all of them:
+{sentence}
+
+Does the new sentence say that one of the notes is no longer true? That takes both: the note and the new sentence are about the same thing (the same food, the same habit, the same choice), and the user cannot hold both now: they changed their mind, stopped doing it, gave it up, or now want the opposite.
+Most new sentences replace nothing: they are about something else, or they add to a note (one more thing the user likes or avoids, a detail). A sentence that tells of a change ("I've stopped ...", "... now") replaces only the note about that same thing, if there is one.
+Answer with JSON only: {{"replaces": [the numbers of the notes it replaces]}}, with an empty list when it replaces none."""
+
+BOTH_TRUE = """A user told an AI assistant two things about themself, at different times.
+
+Earlier: {old}
+Later: {new}
+
+Can both be true of the user now?
+- "both": yes. They are about different things, or the later one adds to the earlier one.
+- "later_only": no. The later sentence means the earlier one is no longer true: they changed their mind, stopped doing it, gave it up, or now want the opposite.
 Answer with JSON only."""
 
 # The prompt's own example lessons: a lesson that repeats one of them was

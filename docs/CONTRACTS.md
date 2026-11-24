@@ -118,6 +118,15 @@ or by auto-dream:
   "about_me" is kept, not a reaction to the last answer, a line about the job,
   or a line of a text handed over to be worked on. It points at the step it is
   about, or at the answer it got when nothing came before.
+- People change. After reading, each such preference is shown to the served
+  model with the ones the user stated before it, oldest first (`replaces`:
+  which of them does it replace?), and each one it names again on its own
+  (`both_true`: can both be true now?). A sentence that cannot be true
+  together with the newer one ("I prefer window seats." after "I've switched
+  to aisle seats.") is retired (`signals.retired_at`): reading, the prompt and
+  practice no longer see it, and it stays retired when its conversation is
+  read again. The order conversations are read in does not matter; answers
+  come from the reader's cache unless the list of earlier sentences changed.
 - Every user message that follows an answer is judged once by the served
   model (`turn`, with thinking): a standing wish about how this user wants
   things, a change wanted for this answer only, new work, or a reaction. Only
