@@ -10,6 +10,10 @@ disagree or cannot be read, the moment is a tie. The feedback-aware
 teacher's preference does not break it: training pulls the candidate
 towards that preference, so it would count the training itself as a win.
 
+The same answers are also written at a few moments the lessons are not
+about (unrelated, acts_differently): how often the candidate acts
+differently there is kept in the record and decides nothing.
+
 The gate (gate.decide) scores each unit (conversation or lesson) as
 (wins - losses) / moments and resamples units. The KL to the teacher stays a
 diagnostic: it scored the original model's text, not the candidate's.
@@ -27,6 +31,7 @@ ANSWER_TOKENS = 384   # each version's answer: long enough for a tool call
 JUDGE_TOKENS = 48     # {"follows": "B"}, with room for a short preamble
 PER_UNIT = 3          # moments per conversation or lesson (its last ones)
 MOMENTS = 24          # moments per Dream at most
+UNRELATED = 8         # confirmed successes answered again, one per conversation
 
 logger = logging.getLogger("songe")
 
@@ -79,6 +84,34 @@ def moments(steps):
     return out
 
 
+def unrelated(steps):
+    """Moments the lessons are not about, to see whether the candidate still
+    acts there as the version in use does: the drift set's confirmed
+    successes (the base was right, nothing was trained on them), one per
+    conversation (its sampled one, the same every Dream), UNRELATED at most."""
+    from ..practice.pool import sampled
+
+    units = {}
+    for s in steps:
+        units.setdefault(s["conversation"], []).append(s)
+    return [sampled(ss, 1)[0] for ss in units.values()][:UNRELATED]
+
+
+def acts_differently(journal, steps, before, name):
+    """{changed, checked}: at how many of these moments the version that
+    answered as `name` takes another action than `before` (quick.differs,
+    the gate's own notion of the same action). Read from the journal only:
+    a moment that version did not answer is not counted."""
+    changed = checked = 0
+    for step in steps:
+        after = journal.load(f"judged-{name}-{step['id']}", None)
+        if after is None or step["id"] not in before:
+            continue
+        checked += 1
+        changed += bool(differs(before[step["id"]], after))
+    return {"changed": changed, "checked": checked}
+
+
 def guide_of(step):
     """What the answer should follow: the lesson (practice), else the user's
     feedback that came after this step."""
@@ -104,12 +137,20 @@ def write(backend, step):
     return {"tokens": list(y), **answer(text, backend.tokenizer, step.get("tools"))}
 
 
-def answers(backend, journal, steps, name, check):
-    """Every moment's answer by the loaded version, resumable."""
+def answers(backend, journal, steps, name, check, kept_as=None):
+    """Every moment's answer by the loaded version, resumable. kept_as: a
+    KeptMeasurements (the incumbent's answers, reused on later Dreams)."""
+    from ..steps import revision_id
+    from .evaluate import kept
+
     out = {}
     for step in steps:
         check()
-        out[step["id"]] = journal.unit(f"judged-{name}-{step['id']}", lambda step=step: write(backend, step))
+        out[step["id"]] = journal.unit(
+            f"judged-{name}-{step['id']}",
+            lambda step=step: kept(kept_as, f"answer{ANSWER_TOKENS}", [step["id"], revision_id(step)],
+                                   lambda: write(backend, step)),
+        )
     return out
 
 

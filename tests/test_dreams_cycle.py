@@ -76,7 +76,11 @@ def dreams(config, store, monkeypatch):
     monkeypatch.setattr(worker.signal, "signal", lambda *a: None)
     anchors = worker.general_steps()[:1]
     monkeypatch.setattr(worker, "general_steps", lambda: anchors)
-    monkeypatch.setattr(gate, "choose_scale", lambda *a, **kw: (None, Decision(False, "Test rejection"), {}))
+    def reject(scaled, before, *a, **kw):
+        before()  # as a candidate that reaches its rows: the incumbent's are measured then
+        return None, Decision(False, "Test rejection"), {}
+
+    monkeypatch.setattr(gate, "choose_scale", reject)
     return config, store
 
 
@@ -163,6 +167,60 @@ def test_the_cycle_records_which_drift_measure_gated(dreams):
     assert check["source"] == "general" and check["conversations"] == 2
     assert check["reason"] == f"2 of {config.min_drift} conversations"
     assert check["drift_set"] is not None
+
+
+def test_unrelated_moments_are_one_per_conversation_and_counted_from_the_journal():
+    from songe.sleep import judged
+
+    steps = [{"id": f"m{i}", "conversation": f"c{i // 2}"} for i in range(24)]  # 12 conversations
+    chosen = judged.unrelated(steps)
+    assert len(chosen) == judged.UNRELATED == 8
+    assert len({s["conversation"] for s in chosen}) == 8  # one each
+    assert chosen == judged.unrelated(steps)  # the same ones every Dream
+    assert judged.unrelated([]) == []
+
+    def call(command):
+        return {"text": "", "tool_calls": [{"name": "shell", "arguments": {"command": command}}]}
+
+    class Journal:
+        saved = {
+            "judged-unrelated-scale-1.0-a": call("pytest -q"),          # the same action
+            "judged-unrelated-scale-1.0-b": call("pnpm add lodash"),    # another one
+            # c was not answered at this strength (the check stopped there).
+        }
+
+        def load(self, name, default):
+            return self.saved.get(name, default)
+
+    moments = [{"id": i, "conversation": i} for i in "abc"]
+    before = {"a": call("pytest -q"), "b": call("cat README.md"), "c": call("ls")}
+    assert judged.acts_differently(Journal(), moments, before, "unrelated-scale-1.0") == {"changed": 1, "checked": 2}
+    assert judged.acts_differently(Journal(), moments, before, "unrelated-scale-0.5") == {"changed": 0, "checked": 0}
+
+
+def test_the_cycle_records_how_often_the_candidate_acts_differently_elsewhere(dreams, monkeypatch):
+    """Confirmed successes are moments no lesson is about. Each version
+    answers a few of them and the record says how often the action changed."""
+    from songe.sleep import gate
+
+    config, store = dreams
+    for i in range(3):
+        add_success(store, f"s{i}", [{"role": "user", "content": f"run the tests {i}"}])
+    # The stand-in backend answers a moment the way the real ones are asked to.
+    plain = Model.sample
+    monkeypatch.setattr(Model, "sample", lambda self, prompt, seed=None, **kw: plain(self, prompt, seed))
+    # Full strength is measured (and then rejected, as in the other tests).
+    monkeypatch.setattr(gate, "choose_scale", lambda evaluate_scale, *a, **kw: (
+        evaluate_scale(1.0) and None, Decision(False, "Test rejection"), {}))
+    result = worker.run(config, store)
+    assert "judged_error" not in result
+    assert result["unrelated_actions"] == {"1.0": {"changed": 0, "checked": 3}}
+    # No successes yet: nothing to answer, and no entry.
+    store.set("experience_watermark", 0)
+    add_practice(store, 1, start=20)
+    with store.connect() as db:
+        db.execute("DELETE FROM signals WHERE id LIKE 'ok-%'")
+    assert "unrelated_actions" not in worker.run(config, store)
 
 
 def test_drift_set_gates_only_when_big_and_narrow_enough(config):
@@ -1013,3 +1071,42 @@ def test_a_pressed_deep_dream_whose_night_failed_retries_then_says_why(store):
     stopped = learner.get("dream_stopped")
     assert store.get("requested_sleep") is False and stopped["reason"] == "training"
     assert "failed 3 times" in stopped["detail"] and "SIGKILL" in stopped["detail"]
+
+
+def test_the_incumbents_measurements_are_kept_for_the_next_dream(tmp_path, config):
+    """kept_as: a second Dream with the same incumbent measures nothing it
+    measured before; a different fingerprint (a new incumbent) measures
+    again and replaces the old folder."""
+    from songe.sleep.evaluate import KeptMeasurements, evaluate
+
+    calls = []
+
+    class Fake:
+        def __init__(self):
+            self.config, self.tokenizer = config, None
+
+        def check(self):
+            pass
+
+        def kl_from(self, base, prompt, teacher, y, *, hindsight=False, **kw):
+            calls.append(("kl", prompt))
+            return 0.25
+
+        def sample(self, prompt, seed=None, **kw):
+            calls.append(("sample", prompt))
+            return [1], "done", None
+
+    v = Fake()
+    refs = [{"id": f"m{i}", "conversation": f"c{i}", "prompt": [i, 1], "teacher": [i, 2], "y": [3],
+             "tools": [], "tool_step": False} for i in range(3)]
+    drift_refs = [{"conversation": f"d{i}", "prompt": [9, i], "y": [4]} for i in range(12)]
+    first = evaluate(v, v, refs, [], drift_refs=drift_refs,
+                     kept_as=KeptMeasurements(tmp_path, ["incumbent-a"]))
+    assert len(calls) == 12 + 3 * 2
+    calls.clear()
+    again = evaluate(v, v, refs, [], drift_refs=drift_refs,
+                     kept_as=KeptMeasurements(tmp_path, ["incumbent-a"]))
+    assert calls == [] and again == first
+    evaluate(v, v, refs[:1], [], drift_refs=drift_refs,
+             kept_as=KeptMeasurements(tmp_path, ["incumbent-b"]))
+    assert len(calls) == 12 + 2 and len(list(tmp_path.iterdir())) == 1
