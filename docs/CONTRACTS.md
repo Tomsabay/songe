@@ -760,6 +760,12 @@ most a one-line label on an example.
   record carries `judged` rows, `improved` {count, worse, same, checked} and
   the report's examples are the moments won. If the backend cannot answer,
   the KL decides and `judged_error` says so.
+  Each version also answers up to 8 moments the lessons are not about (the
+  drift set's confirmed successes, one per conversation). The record's
+  `unrelated_actions` is, per strength tried, {changed, checked}: at how many
+  of them the candidate takes another action than the version in use
+  (`quick.differs`). Recorded only: it decides nothing. Absent when there
+  are no confirmed successes yet.
 
 **Dream control**
 
@@ -800,7 +806,9 @@ observations, then the idle review's "What went wrong" and "Lesson" when the rep
 was reviewed, then "Respond now with your own action." A practice scene's
 hindsight is one note Songe wrote (the lesson and the feedback it came from), so
 its teacher gets that note as an aside instead: not part of the conversation,
-shown only to it, to follow where it applies and not to mention. General anchors
+shown only to it, to follow where it applies and not to mention. The aside asks
+for "the reply to the message above" when the scene has no tools and, when it
+has, for "your own action" as a real step's block does. General anchors
 carry no hindsight and keep the original base as teacher. Forward KL over the full
 vocabulary, each vocabulary entry's contribution clipped at `vocab_clip`
 (provisional 1.0 until measured), is evaluated on the student's freshly sampled
