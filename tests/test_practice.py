@@ -279,7 +279,7 @@ class ChatWriter(FakeReader):
         first = prompt.split("Answer A:\n", 1)[1].split("\n\nAnswer B:", 1)[0]
         return {"follows": "A" if first == wanted else "B"}
 
-    async def reply(self, messages, *, max_tokens, temperature=0):
+    async def reply(self, messages, *, max_tokens, temperature=0, think=None):
         self.replied.append(messages)
         noted = "Not part of the conversation" in messages[-1]["content"]
         return {"content": self.taught if noted else self.plain, "finished": True, "reasoned": self.reasoned}
@@ -374,6 +374,49 @@ def test_a_plain_scene_of_a_reasoning_server_is_kept_without_an_answer(store, mo
     does not lead into that reasoning)."""
     rows = chat_written(store, monkeypatch, ChatWriter(reasoned=True))
     assert all(r["drop"] is None and "teacher_answer" not in r for r in rows)
+
+
+class Reasoner(ChatWriter):
+    """A server that reasons first: asked as its users ask, the reasoning
+    takes the whole room (no content, cut off). With `switch` it replies when
+    the reader's switches turn reasoning off; without, only given more room."""
+
+    def __init__(self, switch):
+        super().__init__()
+        self.switch, self.how = switch, []
+
+    async def reply(self, messages, *, max_tokens, temperature=0, think=None):
+        self.how.append((think, max_tokens))
+        answer = await super().reply(messages, max_tokens=max_tokens)
+        if think is False and self.switch:
+            return answer
+        if max_tokens > 384:
+            return answer | {"reasoned": True}
+        return {"content": "", "finished": False, "reasoned": True}
+
+
+def test_a_server_whose_reasoning_takes_the_whole_room_still_gets_plain_scenes(store, monkeypatch):
+    """Empty content, reasoning present, cut off: both answers looked the
+    same and every scene was dropped, so a reasoning server got no plain-chat
+    practice. The two answers are asked again with reasoning switched off,
+    and the scenes after the first start there. Judged, kept, and never
+    stored to train along: as served, the model reasons first."""
+    writer = Reasoner(switch=True)
+    rows = chat_written(store, monkeypatch, writer)
+    assert all(r["drop"] is None and "teacher_answer" not in r for r in rows)
+    assert writer.how == [(None, 384)] * 2 + [(False, 384)] * 6
+
+
+def test_a_server_that_ignores_the_reasoning_switches_is_given_more_room(store, monkeypatch):
+    writer = Reasoner(switch=False)
+    rows = chat_written(store, monkeypatch, writer)
+    assert all(r["drop"] is None and "teacher_answer" not in r for r in rows)
+    assert writer.how == [(None, 384)] * 2 + [(False, 384)] * 2 + [(None, 384 + 2048)] * 6
+    # A reply that is still empty with all that room is a scene the note did not change.
+    writer = Reasoner(switch=False)
+    monkeypatch.setattr("songe.practice.checks.HOW_ASKED", ({}, {"think": False}))
+    rows = chat_written(store, monkeypatch, writer, variants=(4,))
+    assert rows[-1]["drop"] == "changes" and rows[-1]["id"].endswith("#v4")
 
 
 def test_fewer_plain_messages_than_asked_leave_scenes_that_did_not_build(store, monkeypatch):

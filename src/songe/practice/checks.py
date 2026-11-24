@@ -60,6 +60,12 @@ ORDER = ("built", "decision", "parses", "not_copy", "matters", "changes")
 # Each of the two answers of the changes check, in tokens at most: the same
 # room the gate gives an answer it judges (sleep/judged.py).
 ANSWER_TOKENS = 384
+# A server that reasons first can spend all of that reasoning and return no
+# reply. The two answers are then asked again with the reader's reasoning
+# switches off, and, where the server ignores those, the way its users ask
+# with this much more room. (HOW_ASKED, in the order tried.)
+REASONING_ROOM = 2048
+HOW_ASKED = ({}, {"think": False}, {"max_tokens": ANSWER_TOKENS + REASONING_ROOM})
 FOLLOWS_SCHEMA = {
     "type": "object",
     "properties": {"follows": {"type": "string", "enum": ["A", "B", "both", "neither"]}},
@@ -181,24 +187,47 @@ def placebo_for(practice_id, signal, lessons):
     return others[h % len(others)], h % 2 == 0
 
 
-async def teacher_reply(reader, row):
+async def teacher_reply(reader, row, **how):
     """The served model's answer to the scene with its note shown."""
     import httpx
 
     from ..sleep.prompts import practice_messages
 
+    how = {"max_tokens": ANSWER_TOKENS} | how
     try:
-        return await reader.reply(
-            practice_messages(row["messages"], row["teacher_note"]), max_tokens=ANSWER_TOKENS
-        )
+        return await reader.reply(practice_messages(row["messages"], row["teacher_note"]), **how)
     except httpx.HTTPStatusError as exc:
         if not 400 <= exc.response.status_code < 500:
             raise
         # A chat template that takes no second user message in a row.
-        return await reader.reply(
-            practice_messages(row["messages"], row["teacher_note"], merged=True),
-            max_tokens=ANSWER_TOKENS,
-        )
+        return await reader.reply(practice_messages(row["messages"], row["teacher_note"], merged=True), **how)
+
+
+def lost_in_reasoning(answer):
+    """The reply was cut off with reasoning in it and nothing to show."""
+    from ..quick import visible
+
+    return answer["reasoned"] and not answer["finished"] and not visible(answer["content"])
+
+
+async def two_answers(row, reader):
+    """(the served model's answer to the scene, its answer with the note
+    shown), asked the way its users ask.
+
+    On a server that reasons first the reasoning can take all of
+    ANSWER_TOKENS, and an empty reply made every scene look unchanged: such
+    a server got no plain-chat practice at all. Both answers are then asked
+    again down HOW_ASKED, and the reader remembers what worked for the scenes
+    that follow. An answer asked any other way than the first counts as
+    reasoned, so it is judged and not stored to train along."""
+    first = getattr(reader, "reply_how", 0)
+    for how in range(first, len(HOW_ASKED)):
+        plain = await reader.reply(row["messages"], **({"max_tokens": ANSWER_TOKENS} | HOW_ASKED[how]))
+        taught = await teacher_reply(reader, row, **HOW_ASKED[how])
+        if not (lost_in_reasoning(plain) or lost_in_reasoning(taught)):
+            break
+    reader.reply_how = how
+    return plain, taught | {"reasoned": taught["reasoned"] or how > 0}
 
 
 async def changes(row, signal, reader):
@@ -208,8 +237,7 @@ async def changes(row, signal, reader):
     from ..sleep.judged import shown
     from .prompts import CHANGES
 
-    plain = await reader.reply(row["messages"], max_tokens=ANSWER_TOKENS)
-    taught = await teacher_reply(reader, row)
+    plain, taught = await two_answers(row, reader)
     before, after = ({"text": a["content"], "tool_calls": []} for a in (plain, taught))
     why = {"plain": shown(before, 300), "taught": shown(after, 300)}
     if not visible(after["text"]) or visible(before["text"]) == visible(after["text"]):
