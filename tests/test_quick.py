@@ -143,7 +143,7 @@ async def test_the_proxy_adds_the_sessions_lessons_to_the_system_prompt(
         )
     await upstream.aclose()
     system = [json.loads(r.content)["messages"][0]["content"] for r in seen]
-    assert system[0].startswith("You are an agent.\n\n" + quick.BLOCK)
+    assert system[0].startswith("You are an agent.\n\n" + quick.BLOCK) and system[0].endswith(quick.EXCEPTIONS)
     assert "Conventional Commits" in system[0] and "README" not in system[0]
     assert system[1] == system[0]  # the session keeps its lessons
     if session_header == "x-session-affinity":
@@ -869,3 +869,21 @@ def test_a_change_wanted_once_takes_two_conversations_and_a_standing_wish_one(co
     assert lessons() == {"Answer in Russian."}
     said("o2", "b", "once", "Keep the summary under a hundred words.")
     assert {text.split(" under ")[0] for text in lessons()} == {"Answer in Russian.", "Keep the summary"}
+
+
+def test_the_request_at_hand_wins_over_a_lesson():
+    """Live (Qwen3.5-4B on vLLM, through Songe): a lesson says "I avoid spicy
+    food." and the user asks, in so many words, for something really spicy
+    just this once. With the heading "Follow them unless the current request
+    says otherwise" the model gave what was asked in 14 of 20 such requests,
+    and in 12 of 20 more that ask in other words; with no lesson in the prompt
+    it does in all 20. The heading is far from the request and the model read
+    past it. Said in a line of its own after the list, next to the request:
+    20 of 20 and 18 of 20, the lesson stayed, and it was followed as before
+    in every request that asked for no exception."""
+    text = quick.block([{"text": "I avoid spicy food."}, {"text": "Always use pnpm, never npm."}])
+    assert text.split("\n") == [quick.BLOCK, "- I avoid spicy food.", "- Always use pnpm, never npm.", quick.EXCEPTIONS]
+    # The lessons are followed, the request at hand comes first, and only for this request.
+    assert "Follow them" in quick.BLOCK and "unless" not in quick.BLOCK
+    assert all(said in quick.EXCEPTIONS for said in ("current request", "this time", "every other request"))
+    assert quick.block([]) == ""

@@ -44,9 +44,15 @@ COMMON = {
     "not", "do", "are", "from", "at", "before", "after", "any", "its", "e", "g",
 }
 
-BLOCK = (
-    "Lessons from earlier sessions with this user. Follow them unless the"
-    " current request says otherwise:"
+BLOCK = "Lessons from earlier sessions with this user. Follow them:"
+# The request at hand wins over a lesson. Said after the list, next to the
+# request: said in the heading only ("Follow them unless the current request
+# says otherwise"), a small model kept to the lesson when the user asked, in
+# so many words, for the opposite just this once.
+EXCEPTIONS = (
+    "People make exceptions. When the current request asks for an exception to"
+    " one of these, give the user what they ask for this time. In every other"
+    " request, follow them."
 )
 
 
@@ -578,7 +584,7 @@ def block(lessons):
     """The text added to the system message."""
     if not lessons:
         return ""
-    return "\n".join([BLOCK, *(f"- {lesson['text']}" for lesson in lessons)])
+    return "\n".join([BLOCK, *(f"- {lesson['text']}" for lesson in lessons), EXCEPTIONS])
 
 
 # ---- Before and after: what a new preference changes ----------------------

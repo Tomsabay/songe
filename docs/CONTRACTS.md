@@ -88,7 +88,10 @@ or by auto-dream:
   tokens. Quick Dream waits when the learner's model is not loaded. The proxy
   adds them to the end of the system message of each new session; a session
   keeps the lessons it started with (`LessonPins`), and the recorded request
-  stays the agent's own. Removed lessons (`remove_lesson`) never return.
+  stays the agent's own. Removed lessons (`remove_lesson`) never return. The
+  block ends with a line of its own (`quick.EXCEPTIONS`): the request at hand
+  wins over a lesson when it asks for an exception, this time only, and every
+  other request follows the lessons.
 - Quick Dream before/after: every new preference (stated rule or not; up to
   6 tried) is replayed at the moment it came from (the logged request at the
   step its signal points to; for a stated rule, the tool call before it that
