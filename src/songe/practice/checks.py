@@ -16,10 +16,11 @@ parsed.
   always runs. Not asked of a plain chat's scenes: they never state the
   lesson, and the model then picked "neither" for 165 of 183 good ones.
 - changes (a plain chat's scenes): the served model answers the scene twice,
-  alone and with the scene's note. Kept when the gate's judge question,
-  asked in both orders, picks the answer with the note both times: the
-  scene is one where the lesson changes what the model does. That answer
-  is stored with the scene.
+  alone and with the scene's note, and a judge is asked in both orders
+  which answer does what the user's feedback asks. Kept when it picks the
+  answer with the note in at least one order and the other answer in
+  none: the scene is one where the lesson changes what the model does.
+  That answer is stored with the scene.
 
 Drop codes are the first failed check, in this order (docs/CONTRACTS.md).
 """
@@ -204,7 +205,8 @@ async def changes(row, signal, reader):
     """(kept, why, the answer with the note): does the scene's note change
     what the served model answers, towards the lesson?"""
     from ..quick import verdict_of, visible
-    from ..sleep.judged import JUDGE, shown
+    from ..sleep.judged import shown
+    from .prompts import CHANGES
 
     plain = await reader.reply(row["messages"], max_tokens=ANSWER_TOKENS)
     taught = await teacher_reply(reader, row)
@@ -221,14 +223,17 @@ async def changes(row, signal, reader):
     for swap in (False, True):
         a, b = (after, before) if swap else (before, after)
         answer = await reader.ask(
-            JUDGE.format(request=request, guide=guide, a=shown(a), b=shown(b)),
+            CHANGES.format(request=request, guide=guide, a=shown(a), b=shown(b)),
             FOLLOWS_SCHEMA,
             "changes",
             max_tokens=200,
         )
         picks.append(verdict_of(json.dumps(answer), swap))
     why["changes"] = picks
-    return picks == ["after", "after"], why, taught
+    # One order may come back "neither" or "both" (a 4B judge is unsure in
+    # one order for one scene in ten); an order that prefers the answer
+    # without the note, or the same position twice, drops the scene.
+    return "after" in picks and "before" not in picks, why, taught
 
 
 async def check(row, signal, items, reader, lessons, *, plain=False):

@@ -320,7 +320,7 @@ def test_a_plain_chat_practises_new_messages_of_the_same_kind(store, monkeypatch
 def test_a_plain_scene_is_kept_when_its_note_changes_the_answer(store, monkeypatch):
     """The served model answers the scene alone and with the note; the
     scene is kept when the judge, asked in both orders, picks the answer
-    with the note both times. That answer is stored with the scene."""
+    with the note. That answer is stored with the scene."""
     writer = ChatWriter()
     rows = chat_written(store, monkeypatch, writer)
     assert all(r["checks"]["changes"] is True for r in rows)
@@ -332,7 +332,26 @@ def test_a_plain_scene_is_kept_when_its_note_changes_the_answer(store, monkeypat
     # The judge reads the user's own words, each pair in both orders.
     judged = [p for p, name in zip(writer.prompts, writer.asked, strict=True) if name == "changes"]
     assert len(judged) == 6 and all("I use uv, not pip." in p for p in judged)
+    # Asked what the feedback asks, not which answer is the better one.
+    assert all("Judge only that, not which answer is longer" in p for p in judged)
     assert "Answer A:\npip install it" in judged[0] and "Answer A:\nuv add it" in judged[1]
+
+
+def test_a_plain_scene_is_kept_when_the_judge_cannot_tell_in_one_order(store, monkeypatch):
+    """Live: of 384 scenes 173 were kept, and many dropped ones did follow
+    the lesson (answers that began "Yes, chef.", bare SQL under "Only the
+    query please"): the judge said "neither" in one of the two orders."""
+
+    class Unsure(ChatWriter):
+        async def ask(self, prompt, schema, name, **kw):
+            answer = await super().ask(prompt, schema, name, **kw)
+            if name == "changes" and "Answer A:\nuv add it" in prompt:
+                return {"follows": "neither"}
+            return answer
+
+    rows = chat_written(store, monkeypatch, Unsure())
+    assert all(r["drop"] is None and r["why"]["changes"] == ["after", "neither"] for r in rows)
+    assert rows[0]["teacher_answer"] == {"content": "uv add it", "finished": True}
 
 
 def test_a_plain_scene_the_note_does_not_change_is_dropped(store, monkeypatch):

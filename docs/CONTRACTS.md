@@ -556,7 +556,7 @@ status lines.
 // Practice: one line per scene, so surfaces can list them plainly.
 {
   "written": 137, "kept": 112, "dropped": 25,
-  "dropped_by": {"<check code>": 25},   // built | decision | parses | not_copy | matters
+  "dropped_by": {"<check code>": 25},   // built | decision | parses | not_copy | matters | changes
   "recent": [PracticeLine]        // newest 5; all in the full record
 }
 // PracticeLine
