@@ -267,13 +267,33 @@ def bookkeeping(store, mode="dreams"):
     return store.get("experience_watermark", 0), store.get("practice_revisions", {})
 
 
+# {scene id: revision} of the scenes a rejected Deep Dream trained.
+REJECTED = "rejected_practice"
+
+
 def untrained(store, steps=None):
-    """Kept scenes not trained on yet."""
+    """Kept scenes not trained on yet. The scenes of a rejected Deep Dream
+    are among them: nothing was adopted, so nothing was practised. They are
+    marked "retry", come after the scenes no Dream has tried (a capped Dream
+    takes those first), and on their own they wait: the same scenes alone
+    would be rejected again."""
     from ..steps import revision_id
 
     watermark, practiced = bookkeeping(store)
     steps = practice_steps(store) if steps is None else steps
-    return [s for s in steps if revision_id(s) > max(watermark, practiced.get(s["id"], 0))]
+    rows = marked(store, [s for s in steps if revision_id(s) > max(watermark, practiced.get(s["id"], 0))])
+    fresh = [s for s in rows if not s.get("retry")]
+    if not fresh:
+        return []
+    return fresh + [s for s in rows if s.get("retry")]
+
+
+def marked(store, steps):
+    """These scenes, the ones a rejected Deep Dream trained marked "retry"."""
+    from ..steps import revision_id
+
+    rejected = store.get(REJECTED) or {}
+    return [s | {"retry": True} if rejected.get(s["id"]) == revision_id(s) else s for s in steps]
 
 
 def pending(config, store):
