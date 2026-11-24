@@ -136,7 +136,11 @@ or by auto-dream:
   a standing wish becomes a note in the prompt at once, also when the split
   into parts read it as a new task. A change wanted once becomes a note when
   the same wish comes up in a second conversation. New work and reactions do
-  not become notes. A sentence shaped like a rule stays a rule.
+  not become notes. The verdict also holds for a sentence shaped like a
+  rule in that message: inside new work or a reaction it is not a note, and
+  inside a change wanted once it waits for the second conversation. A
+  preference stated about oneself keeps its own check. Messages that were
+  not judged (the opening one, "continue") are handled as before.
 - Deep Dream (2–3 hours, skills): reads what is left, writes practice, trains,
   checks. When one is adopted, the lessons whose signals it trained leave the
   prompt (`quick.absorb`); an undo lets them come back.
