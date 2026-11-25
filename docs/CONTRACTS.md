@@ -137,6 +137,16 @@ or by auto-dream:
   into parts read it as a new task. A change wanted once becomes a note when
   the same wish comes up in a second conversation. New work and reactions do
   not become notes. A sentence shaped like a rule stays a rule.
+- Practice needs the same evidence as a note (`quick.admitted`, one bar for
+  both; training is harder to undo than a note). Where the user's turn was
+  judged, Deep Dream writes scenes for a standing wish and for a rule of
+  theirs at once, for a change wanted once only when the same wish has come
+  up in a second conversation, and for nothing the user took out of the
+  prompt. The bar is about evidence, not about what a lesson applies to: a
+  lesson too narrow for the prompt (one kind of task), or one from the work
+  itself (a tool's output), is practised as before. Scenes already written
+  for a lesson that does not meet the bar are kept and not trained
+  (`practice.pool.not_admitted`).
 - Deep Dream (2–3 hours, skills): reads what is left, writes practice, trains,
   checks. When one is adopted, the lessons whose signals it trained leave the
   prompt (`quick.absorb`); an undo lets them come back.
