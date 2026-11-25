@@ -302,14 +302,23 @@ async def retire_replaced(store, reader):
 SAME = "same_notes"
 
 
+async def one_wish(reader, a, b):
+    """Whether the model takes notes a and b for one wish, shown in this order."""
+    from . import prompts as P
+
+    sure = await reader.ask(P.SAME_WISH.format(a=a, b=b), P.SAME_WISH_SCHEMA, "same_wish")
+    return isinstance(sure, dict) and sure.get("kind") == "same"
+
+
 async def fold_same(store, reader):
     """People repeat themselves in other words: "In metric please." in one
     conversation, "Celsius please, I don't think in Fahrenheit." in the next.
     Each becomes a note, and the ten places of the prompt fill up with three
     habits. Each note for the prompt is shown to the model with the notes
     before it (which could be the same wish?), and each one named is shown
-    again with it alone (one wish, noted twice?). A note that repeats an
-    earlier one is folded into it: both count for one lesson (how often it
+    again with it alone, both ways round (one wish, noted twice?). A note
+    that repeats an earlier one both times is folded into it: both count for
+    one lesson (how often it
     came up, in how many conversations) and take one place, which keeps each
     of their wordings (quick.joined). Nothing is retired and no wording is
     dropped, so a wrong answer costs a place or shares one, never a note.
@@ -344,10 +353,14 @@ async def fold_same(store, reader):
                 named = answer.get("same") if isinstance(answer, dict) else None
             numbers = [n for n in named if type(n) is int and 1 <= n <= len(shown)] if isinstance(named, list) else []
             for n in dict.fromkeys(numbers):
-                sure = await reader.ask(
-                    P.SAME_WISH.format(a=shown[n - 1]["text"], b=text), P.SAME_WISH_SCHEMA, "same_wish"
-                )
-                if isinstance(sure, dict) and sure.get("kind") == "same":
+                # Asked both ways round, and folded only when both answers say
+                # one wish. Live (Qwen3.5-4B): with "uv please." as note 1 the
+                # model said "Same thing without the comments." again as "Use
+                # uv without comments", and a place held three habits. Over
+                # 40 replays of four readings: 9 notes joined a place of
+                # another habit asked one way, 4 asked both ways.
+                earlier = shown[n - 1]["text"]
+                if await one_wish(reader, earlier, text) and await one_wish(reader, text, earlier):
                     home = shown[n - 1]
                     break
             if home is None:

@@ -134,9 +134,10 @@ or by auto-dream:
   come from the reader's cache unless the list of earlier sentences changed.
 - People repeat themselves. Then each note for the prompt is shown to the
   served model with the notes before it, oldest first (`same_note`: which of
-  them could be the same wish?), and each one it names again with it alone
-  (`same_wish`: the model says each note again as an instruction, then
-  "same" or "different"). A note that repeats an earlier one ("Celsius
+  them could be the same wish?), and each one it names again with it alone,
+  both ways round (`same_wish`: the model says each note again as an
+  instruction, then "same" or "different"). A note that repeats an earlier
+  one both times ("Celsius
   please, I don't think in Fahrenheit." after "In metric please.") is folded
   into it (`same_notes` in the learner's state: signal -> the first signal of
   that wish). Folded notes are one lesson and take one place in the prompt,

@@ -907,8 +907,10 @@ class Folding:
     with the numbers given for that note) and whether two notes are one wish
     (the pairs given are). Keeps the questions."""
 
-    def __init__(self, same=None, one_wish=()):
-        self.same, self.one_wish, self.listed, self.pairs = same or {}, set(one_wish), [], []
+    def __init__(self, same=None, one_wish=(), one_way=()):
+        # one_way: pairs that are one wish only when shown in this order.
+        self.same, self.one_wish, self.one_way = same or {}, set(one_wish) | set(one_way), set(one_way)
+        self.listed, self.pairs = [], []
 
     async def ask(self, prompt, schema, name, **kw):
         if name == "same_note":
@@ -917,7 +919,7 @@ class Folding:
         assert name == "same_wish", name
         pair = (prompt.split("Note 1: ", 1)[1].split("\n")[0], prompt.split("Note 2: ", 1)[1].split("\n")[0])
         self.pairs.append(pair)
-        return {"note_1_asks": pair[0], "note_2_asks": pair[1], "kind": "same" if pair in self.one_wish else "different"}
+        return {"note_1_asks": pair[0], "note_2_asks": pair[1], "kind": "same" if pair in self.one_wish or pair[::-1] in self.one_wish - self.one_way else "different"}
 
 
 def test_one_wish_said_in_other_words_takes_one_place(config, store):
@@ -950,7 +952,9 @@ def test_one_wish_said_in_other_words_takes_one_place(config, store):
     noted(store, "m3", "d", metric, revision=4)
     reader = Folding(same={celsius: [2, 1], metric: [9, "1", True, 1]}, one_wish={(meters, celsius), (meters, metric)})
     assert asyncio.run(reading.fold_same(store, reader)) == 2
-    assert reader.pairs == [(uv, celsius), (meters, celsius), (meters, metric)]  # an answer that names no note is ignored
+    # An answer that names no note is ignored; a pair said to be one wish is
+    # asked again the other way round.
+    assert reader.pairs == [(uv, celsius), (meters, celsius), (celsius, meters), (meters, metric), (metric, meters)]
     result = quick.quick_dream(store, config, now=2.0)
     lessons = {lesson["text"]: lesson for lesson in quick.active(store)}
     # One place for the wish, in the place one of its notes had, and no
@@ -975,6 +979,20 @@ def test_one_wish_said_in_other_words_takes_one_place(config, store):
     quick.remove(store, one["id"])
     quick.quick_dream(store, config, now=4.0)
     assert [lesson["text"] for lesson in quick.active(store)] == [uv]
+
+
+def test_two_notes_are_one_wish_only_when_the_model_says_so_both_ways_round(config, store):
+    """Live (Qwen3.5-4B): shown "uv please." and then "Same thing without the
+    comments.", the model said the second again as "Use uv without comments"
+    and called them one wish; the other way round it did not. A place of the
+    prompt then held three habits."""
+    uv, comments = "uv please.", "Same thing without the comments."
+    noted(store, "u1", "a", uv, revision=1)
+    noted(store, "c1", "b", comments, revision=2)
+    reader = Folding(same={comments: [1]}, one_way={(uv, comments)})
+    assert asyncio.run(reading.fold_same(store, reader)) == 0
+    assert reader.pairs == [(uv, comments), (comments, uv)]
+    assert asyncio.run(reading.fold_same(store, Folding(same={comments: [1]}, one_wish={(uv, comments)}))) == 1
 
 
 def test_a_change_wanted_once_counts_in_each_conversation_however_it_was_worded(config, store):

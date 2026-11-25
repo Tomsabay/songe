@@ -1208,7 +1208,7 @@ class Repeating(Changing):
 
     def __init__(self, about_me=(), same=None, one_wish=(), **changes):
         super().__init__(about_me, **changes)
-        self.same, self.one_wish, self.listed, self.pairs = same or {}, set(one_wish), [], []
+        self.same, self.one_wish, self.one_way, self.listed, self.pairs = same or {}, set(one_wish), set(), [], []
 
     async def ask(self, prompt, schema, name):
         if name == "same_note":
@@ -1217,7 +1217,7 @@ class Repeating(Changing):
         if name == "same_wish":
             pair = (prompt.split("Note 1: ", 1)[1].split("\n")[0], prompt.split("Note 2: ", 1)[1].split("\n")[0])
             self.pairs.append(pair)
-            return {"note_1_asks": pair[0], "note_2_asks": pair[1], "kind": "same" if pair in self.one_wish else "different"}
+            return {"note_1_asks": pair[0], "note_2_asks": pair[1], "kind": "same" if pair in self.one_wish or pair[::-1] in self.one_wish - self.one_way else "different"}
         return await super().ask(prompt, schema, name)
 
 
@@ -1244,7 +1244,7 @@ def test_a_preference_said_again_shares_one_place_and_a_changed_one_still_leaves
     # The retired sentence is not among the notes shown; the seat preference
     # the model named for the dairy note is a different wish, and stays apart.
     assert reader.listed == [P.SAME.format(notes=f"1. {dairy}", note=again), P.SAME.format(notes=f"1. {dairy}", note=aisle)]
-    assert reader.pairs == [(dairy, again), (dairy, aisle)]
+    assert reader.pairs == [(dairy, again), (again, dairy), (dairy, aisle)]
     quick.quick_dream(store, config)
     lessons = {lesson["text"]: lesson for lesson in quick.active(store)}
     assert set(lessons) == {f"{again} {dairy}", aisle}
