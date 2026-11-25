@@ -180,6 +180,33 @@ def test_an_example_of_the_question_pasted_back_is_not_the_users_wish():
     assert P.turn_verdict({"standing": "yes", "kind": "once", "wish": "Use metric units."}, "everything in metric")[0] == "lasting"
 
 
+def test_words_the_user_put_in_quotation_marks_are_not_cut_off(store):
+    """Live (Qwen3.5-4B on vLLM, structured output): a JSON string ends at the
+    first double quote the model does not escape, and it copied the user's."""
+    said = 'Always start your reply with "Yes, chef."'
+
+    def as_json_string(text):
+        return text.split('"')[0]  # what structured output leaves of it
+
+    class Copying(FakeReader):
+        async def ask(self, prompt, schema, name):
+            answer = await super().ask(prompt, schema, name)
+            if name == "classify":
+                text = prompt.rsplit("New user message:\n", 1)[1].split("\n")[0]
+                return {"parts": [{"says_something_is_wrong": True, "kind": "feedback", "type": "correction",
+                                   "text": as_json_string(text)}]}
+            if name == "turn":
+                text = prompt.rsplit("The user's next message:\n", 1)[1].split("\n")[0]
+                return {"standing": "yes", "kind": "once", "wish": as_json_string(text)}
+            return answer
+
+    record_session(store, reply_text=said)
+    read(store, Copying())
+    wish = next(s for s in reading.signals(store) if s["type"] == "correction" and s.get("turn_kind"))
+    assert wish["text"] == said  # the user's exact words, with their marks
+    assert wish["lesson"] == "Always start your reply with 'Yes, chef.'"
+
+
 def test_what_the_turn_was_is_kept_with_its_signals(store):
     record_session(store, reply_text="make it shorter")
 
