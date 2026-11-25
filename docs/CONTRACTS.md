@@ -135,8 +135,12 @@ or by auto-dream:
   things, a change wanted for this answer only, new work, or a reaction. Only
   a standing wish becomes a note in the prompt at once, also when the split
   into parts read it as a new task. A change wanted once becomes a note when
-  the same wish comes up in a second conversation. New work and reactions do
-  not become notes. A sentence shaped like a rule stays a rule.
+  the same wish comes up in a second conversation; it is stored as a
+  correction for that, also when the split read it as a new task. After a plain
+  answer (no tool call), a turn the split read as saying something is wrong
+  or missing while the turn question read new work or a question (a
+  reminder: "Where's my ...?") waits the same way. Other new work and
+  reactions do not become notes. A sentence shaped like a rule stays a rule.
 - Deep Dream (2–3 hours, skills): reads what is left, writes practice, trains,
   checks. When one is adopted, the lessons whose signals it trained leave the
   prompt (`quick.absorb`); an undo lets them come back.
