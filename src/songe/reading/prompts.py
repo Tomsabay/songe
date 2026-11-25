@@ -8,6 +8,8 @@ they were checked against a hand-labelled answer key):
 - lesson: what to do differently, how general that is, how success is checked
 """
 
+import re
+
 TYPES = ["correction", "retry", "approval"]
 
 CLASSIFY_SCHEMA = {
@@ -275,14 +277,26 @@ Answer with JSON only."""
 TURN_EXAMPLE_NAMES = ("chinese", "polars", "pandas", "jquery", "linux")
 
 
+# A lead-in that only points back at the conversation: a note is read without it.
+BACK = re.compile(r"^(same thing|same|again)\b[\s,]*((but|and)\s+)?", re.I)
+
+
 def own_words(message):
     """The user's message as a note in their own words, or "" when it cannot
     be one: a single word, several sentences (which of them is the wish is
-    not known), or longer than a note is left whole (quick.SHORT)."""
+    not known), or longer than a note is left whole (quick.SHORT). Words
+    that only point back at the conversation are left off: "Same thing
+    without the comments." is noted as "Without the comments." (live: asked
+    whether that note and "uv please." are one wish, the model read "same
+    thing" as uv and put both in one place of the prompt)."""
     from .rules import SENTENCES
 
     own = " ".join(str(message).split())
-    return own if len(own) <= 90 and len(own.split()) > 1 and len(SENTENCES.split(own)) == 1 else ""
+    if len(own) > 90 or len(SENTENCES.split(own)) != 1:
+        return ""
+    rest = BACK.sub("", own)
+    own = own if rest == own else rest[:1].upper() + rest[1:]
+    return own if len(own.split()) > 1 else ""
 
 
 def turn_verdict(answer, message="", earlier=""):

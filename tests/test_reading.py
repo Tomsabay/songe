@@ -194,6 +194,10 @@ def test_a_wish_that_says_nothing_the_user_wrote_is_not_used():
     assert P.turn_verdict(french, "That was wrong. " + said, cat) == ("lasting", "")
     assert P.turn_verdict(french, "start your reply with yes chef and " + "then go on " * 8, cat) == ("lasting", "")
     assert P.turn_verdict(french, "again", cat) == ("lasting", "")
+    # Words that only point back at the conversation are left off the note.
+    assert P.own_words("Same thing without the comments.") == "Without the comments."
+    assert P.own_words("Same thing but no em dashes please.") == "No em dashes please."
+    assert P.own_words("Again, properly.") == ""
     # A wish worded from the user's words stays as the model worded it,
     # also when the user said it in an earlier message of the conversation.
     chef = {"standing": "yes", "kind": "once", "wish": "Start every reply with 'Yes, chef.'"}
