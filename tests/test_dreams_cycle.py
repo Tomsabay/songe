@@ -593,8 +593,9 @@ def test_a_kept_dream_says_which_check_it_failed():
 
 def test_the_gate_judges_what_each_version_writes(monkeypatch):
     """What the version in use and the candidate each write at a held-out
-    moment is compared: the same action ties; a different one goes to the
-    base model's blind judgement; the report's pairs are the moments won."""
+    moment is compared: the same action ties; of two different ones each is
+    judged by the base model on its own; the report's pairs are the moments
+    won."""
     import contextlib
 
     from songe.sleep import judged
@@ -610,9 +611,8 @@ def test_the_gate_judges_what_each_version_writes(monkeypatch):
             return contextlib.nullcontext()
 
         def sample(self, prompt, seed=None, *, deterministic=False, max_tokens=None):
-            if isinstance(prompt, str):  # the judge's question
-                new_is_a = prompt.index("Answer A:") < prompt.index("pnpm add") < prompt.index("Answer B:")
-                return [], verdicts.get("say", '{"follows": "%s"}' % ("A" if new_is_a else "B")), None
+            if isinstance(prompt, str):  # the judge's question, about one answer
+                return [], verdicts.get("say", '{"follows": "%s"}' % ("yes" if "pnpm add" in prompt else "no")), None
             text = '{"name": "shell", "arguments": {"command": "%s"}}' % (
                 "pnpm add lodash" if self.weight else "npm install lodash")
             return [self.weight], text, None
@@ -641,8 +641,8 @@ def test_the_gate_judges_what_each_version_writes(monkeypatch):
     assert shown[0]["feedback"] == "use pnpm here, never npm" and shown[2]["lesson"] == "Always use pnpm."
     # The judge does not decide: a tie, whatever it said. The teacher is not
     # asked (this backend has none): its preference is what training fits.
-    for say, why in (('{"follows": "both"}', "both"), ('{"follows": "neither"}', "neither"),
-                     ("Let me think about the two answers", "unclear")):
+    for say, why in (('{"follows": "yes"}', "both"), ('{"follows": "no"}', "neither"),
+                     ("Let me think about the answer", "unclear")):
         verdicts["say"] = say
         assert judged.outcome(backend, steps[0], before["s0"], after["s0"]) == ("tie", why)
     rows = judged.judge(backend, Journal(), steps, before, after, "scale-1.0", lambda: None)
@@ -665,7 +665,7 @@ def test_judged_units_decide_and_the_kl_is_only_a_diagnostic():
     assert not d.accepted and d.reason.startswith("Not clearly better: better on 0, worse on 0")
 
 
-def test_near_identical_calls_tie_and_a_judge_that_always_picks_one_side_counts_for_nothing(monkeypatch):
+def test_near_identical_calls_tie_and_a_judge_that_says_yes_to_everything_counts_for_nothing(monkeypatch):
     """Live: two reads of snake.py (line 20 vs 21) and two "debate the
     timeout" answers were judged wins; a 3B judge preferred one position."""
     import contextlib
@@ -677,20 +677,20 @@ def test_near_identical_calls_tie_and_a_judge_that_always_picks_one_side_counts_
     assert not differs(read(20), read(21))
     monkeypatch.setattr(judged, "render", lambda tok, messages, tools, **kw: messages[0]["content"])
 
-    class AlwaysA:
+    class AlwaysYes:
         tokenizer = config = None
 
         def base(self):
             return contextlib.nullcontext()
 
         def sample(self, prompt, seed=None, *, deterministic=False, max_tokens=None):
-            return [], '{"follows": "A"}', None
+            return [], '{"follows": "yes"}', None
 
     step = {"id": "m1", "conversation": "c1", "context": [{"role": "user", "content": "run it"}],
             "hindsight": [{"role": "user", "content": "always execute the script"}]}
     before = {"text": "", "tool_calls": [{"name": "bash", "arguments": {"command": "python game.py"}}], "tokens": [1]}
     after = {"text": "", "tool_calls": [{"name": "edit", "arguments": {"path": "game.py"}}], "tokens": [2]}
-    assert judged.outcome(AlwaysA(), step, before, after) == ("tie", "both")
+    assert judged.outcome(AlwaysYes(), step, before, after) == ("tie", "both")
 
 
 def test_a_targeted_lesson_living_in_one_conversation_can_pass_per_moment():
@@ -712,9 +712,48 @@ def test_a_targeted_lesson_living_in_one_conversation_can_pass_per_moment():
     assert not decide(before, weak, min_heldout=5, drift_limit=0.05).accepted
 
 
+def test_two_answers_that_both_do_what_was_asked_tie_whatever_else_differs(monkeypatch):
+    """Live, Qwen3.5-4B as judge: "Yes, chef." and a fenced `pnpm add
+    react-query` against the bare command under "We're on pnpm here." was a
+    loss; a full sentence with the date against the bare date a loss for one
+    question and a win for the next. Asked which of two answers follows
+    better, the judge prefers one of them for reasons the feedback does not
+    name; asked about each alone, both do what was asked, and that is a tie."""
+    import contextlib
+
+    from songe.sleep import judged
+
+    monkeypatch.setattr(judged, "render", lambda tok, messages, tools, **kw: messages[0]["content"])
+    asked = []
+
+    class PrefersTheLonger:
+        tokenizer = config = None
+
+        def base(self):
+            return contextlib.nullcontext()
+
+        def sample(self, prompt, seed=None, *, deterministic=False, max_tokens=None):
+            asked.append(prompt)
+            if "Answer A:" in prompt:  # which of two: the longer one, in either order
+                a, b = prompt.split("Answer A:")[1].split("Answer B:")
+                return [], '{"follows": "%s"}' % ("A" if len(a) > len(b.split("Which answer")[0]) else "B"), None
+            return [], '{"follows": "%s"}' % ("yes" if "pnpm add" in prompt.split("answer now:")[1] else "no"), None
+
+    step = {"id": "m1", "conversation": "c1", "context": [{"role": "user", "content": "How do I add react-query to my web app?"}],
+            "hindsight": [{"role": "user", "content": "We're on pnpm here."}]}
+    before = {"text": "Yes, chef.\n\n```bash\npnpm add react-query\n```", "tool_calls": [], "tokens": [1]}
+    after = {"text": "pnpm add react-query", "tool_calls": [], "tokens": [2]}
+    old = {"text": "```bash\nnpm install react-query\n```\nThis installs the package and its types.", "tool_calls": [], "tokens": [3]}
+    assert judged.outcome(PrefersTheLonger(), step, before, after) == ("tie", "both")
+    assert all("Answer A:" not in prompt for prompt in asked)  # never asked to prefer one
+    # Only one of them does it: that one wins, however short it is.
+    assert judged.outcome(PrefersTheLonger(), step, old, after) == ("win", "judge")
+    assert judged.outcome(PrefersTheLonger(), step, after, old) == ("loss", "judge")
+
+
 def test_the_judge_s_answer_is_begun_for_it_with_thinking_switched_off(monkeypatch):
     """Live: about 4 of 14 replies could not be read. The reply is begun
-    ('{"follows": "'), so only the letter is left, and thinking is off."""
+    ('{"follows": "'), so only the word is left, and thinking is off."""
     import contextlib
 
     from songe.sleep import judged
